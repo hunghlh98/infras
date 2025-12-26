@@ -120,6 +120,8 @@ services:
       - redis-node-1
       - redis-node-2
       - redis-node-3
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: >
       bash -c "
         echo 'Waiting for Redis nodes to start...' &&

@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 KEYS_FILE="${ROOT_DIR}/vault_keys.txt"
-ENV_FILE="${ROOT_DIR}/.env"
+ENV_FILE="${ROOT_DIR}/local.env"
 
 # Load environment variables
 if [ -f "$ENV_FILE" ]; then
