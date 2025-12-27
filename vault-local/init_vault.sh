@@ -67,6 +67,7 @@ run_vault kv put -mount=secret mysql/admin password="$MYSQL_ADMIN_PASSWORD"
 run_vault kv put -mount=secret mysql/my_user password="$MYSQL_USER_PASSWORD"
 run_vault kv put -mount=secret kafka/sasl username="$KAFKA_SASL_USERNAME" password="$KAFKA_SASL_PASSWORD"
 run_vault kv put -mount=secret redis/auth password="$REDIS_PASSWORD"
+run_vault kv put -mount=secret postgres/auth password="$POSTGRES_PASSWORD"
 echo "[OK] All secrets have been written to Vault."
 
 echo "[INFO] Verifying secrets..."
