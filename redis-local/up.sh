@@ -17,15 +17,22 @@ fetch_secret() {
     fi
 }
 
-# Check if Vault is running and keys exist
-if [ -f "$KEYS_FILE" ] && [ "$(docker ps -q -f name=vault-local)" ]; then
-    echo "[INFO] Vault detected. Fetching secrets..."
+# Source Common Library
+source "${ROOT_DIR}/bin/lib/common.sh"
+
+echo "[INFO] Starting redis-local..."
+
+# Check Vault Availability
+check_vault
+
+if [ -n "${VAULT_TOKEN:-}" ]; then
+    echo "[INFO] Vault detected. Ensuring/Fetching secrets..."
     
-    # Get Root Token
-    export VAULT_TOKEN=$(jq -r ".root_token" "$KEYS_FILE")
+    # Ensure credential exists
+    ensure_credential "infras/redis/auth" "default"
     
     # Fetch Secrets
-    export REDIS_PASSWORD=$(fetch_secret redis/auth password)
+    export REDIS_PASSWORD=$(fetch_secret infras/redis/auth password)
     
     echo "[INFO] Secrets fetched successfully."
 else

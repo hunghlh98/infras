@@ -32,7 +32,7 @@ create_acl() {
         
         # Using a temporary file
         temp_file=$(mktemp)
-        local new_line="user $service_name on >$password ~* &* +@all"
+        local new_line="user $service_name on >$password ~$service_name:* &* +@all"
         
         awk -v user="$service_name" -v new_line="$new_line" '
         $2 == user { print new_line; found=1; next }
@@ -42,7 +42,7 @@ create_acl() {
         
     else
         log_info "Adding new Redis user '$service_name'..."
-        echo "user $service_name on >$password ~* &* +@all" >> "$acl_file"
+        echo "user $service_name on >$password ~$service_name:* &* +@all" >> "$acl_file"
     fi
     
     

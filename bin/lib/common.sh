@@ -119,6 +119,25 @@ store_credential() {
     docker exec -e VAULT_TOKEN="$VAULT_TOKEN" vault-local vault kv put -mount="$mount" "$secret_path" username="$username" password="$password" > /dev/null
 }
 
+ensure_credential() {
+    local path=$1
+    local username=$2
+    
+    log_info "Ensuring credential exists at $path..."
+    
+    # Try to fetch existing password
+    local existing_pass=$(fetch_secret "$path" password 2>/dev/null || true)
+    
+    if [ -n "$existing_pass" ]; then
+        log_info "Credential already exists at $path. Skipping generation."
+    else
+        log_info "Credential missing at $path. Generating new..."
+        local new_pass=$(generate_password)
+        store_credential "$path" "$username" "$new_pass"
+        log_info "Generated and stored new credential for $username at $path."
+    fi
+}
+
 create_policy() {
     local app_name=$1
     local policy_name="app-${app_name}"

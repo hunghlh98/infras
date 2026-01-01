@@ -1,3 +1,3 @@
-user default on >gcGBgEQ1F4YAV1KbKye5 ~* &* +@all
-user worker on >gcGBgEQ1F4YAV1KbKye5 ~* &* +@all
-user test_app_1767270486 on >Gui9JpsdjtW9dI3A ~* &* +@all
+user default on >3KGdb7AIH4FHBUu3 ~* &* +@all
+user worker on >3KGdb7AIH4FHBUu3 ~* &* +@all
+user test-isolation on >Ih0MfHk0RqhHzFHN ~test-isolation:* &* +@all

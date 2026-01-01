@@ -5,27 +5,22 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 KEYS_FILE="${ROOT_DIR}/vault_keys.txt"
 COMPOSE_FILE="${ROOT_DIR}/mysql-local/docker-compose.yml"
 
-# Function to fetch secret from Vault
-fetch_secret() {
-    local path=$1
-    local field=$2
-    if [ -n "${VAULT_TOKEN:-}" ]; then
-        docker exec -e VAULT_TOKEN="$VAULT_TOKEN" vault-local vault kv get -mount=infras -field="$field" "$path"
-    else
-        docker exec vault-local vault kv get -mount=infras -field="$field" "$path"
-    fi
-}
+# Source Common Library
+source "${ROOT_DIR}/bin/lib/common.sh"
 
-# Check if Vault is running and keys exist
-# Using docker ps -q -f name=vault-local to avoid pipefail issues with grep -q
-if [ -f "$KEYS_FILE" ] && [ "$(docker ps -q -f name=vault-local)" ]; then
-    echo "[INFO] Vault detected. Fetching secrets..."
+echo "[INFO] Starting mysql-local..."
+
+# Check Vault Availability
+check_vault
+
+if [ -n "${VAULT_TOKEN:-}" ]; then
+    echo "[INFO] Vault detected. Ensuring/Fetching secrets..."
     
-    # Get Root Token
-    export VAULT_TOKEN=$(jq -r ".root_token" "$KEYS_FILE")
+    # Ensure credential exists (self-initialization)
+    ensure_credential "infras/mysql/root" "root"
     
     # Fetch Secrets
-    export MYSQL_ROOT_PASSWORD=$(fetch_secret mysql/root password)
+    export MYSQL_ROOT_PASSWORD=$(fetch_secret infras/mysql/root password)
     
     echo "[INFO] Secrets fetched successfully."
     

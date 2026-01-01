@@ -5,23 +5,24 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 KEYS_FILE="${ROOT_DIR}/vault_keys.txt"
 COMPOSE_FILE="${ROOT_DIR}/postgres-local/docker-compose.yml"
 
-# Helper function to fetch secrets
-fetch_secret() {
-    local path=$1
-    local field=$2
-    if [ -n "${VAULT_TOKEN:-}" ]; then
-        docker exec -e VAULT_TOKEN="$VAULT_TOKEN" vault-local vault kv get -mount=infras -field="$field" "$path"
-    else
-        docker exec vault-local vault kv get -mount=infras -field="$field" "$path"
-    fi
-}
+# Source Common Library
+source "${ROOT_DIR}/bin/lib/common.sh"
 
-if [ -f "$KEYS_FILE" ] && [ "$(docker ps -q -f name=vault-local)" ]; then
-    echo "[INFO] Vault detected. Fetching secrets..."
-    export VAULT_TOKEN=$(jq -r ".root_token" "$KEYS_FILE")
+echo "[INFO] Starting postgres-local..."
+
+# Check Vault Availability
+check_vault
+
+if [ -n "${VAULT_TOKEN:-}" ]; then
+    echo "[INFO] Vault detected. Ensuring/Fetching secrets..."
     
-    # FETCH SECRETS HERE
-    export POSTGRES_PASSWORD=$(fetch_secret postgres/auth password)
+    # Ensure credential exists
+    ensure_credential "infras/postgres/auth" "postgres"
+    
+    # Fetch Secrets
+    export POSTGRES_PASSWORD=$(fetch_secret infras/postgres/auth password)
+    
+    echo "[INFO] Secrets fetched successfully."
 else
     echo "[WARN] Vault not detected. Using local environment."
 fi

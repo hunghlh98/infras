@@ -25,7 +25,9 @@ This process will:
 *   Start a Vault container.
 *   Initialize and unseal Vault.
 *   Save unseal keys and root token to `vault_keys.txt`.
-*   **Auto-generate** strong random passwords for all services and write them into Vault.
+*   Save unseal keys and root token to `vault_keys.txt`.
+*   Enables `infras/` and `apps/` secret engines.
+*   **Note**: This script **does not** generate secrets. Services will generate their own secrets upon startup.
 
 ### 3. Start Other Services
 
@@ -36,6 +38,7 @@ Once Vault is running and populated, you can start the other services. The start
 ```bash
 ./kafka-local/up.sh
 ```
+*   **Auto-generates** `infras/kafka/sasl` credential if missing.
 *   Generates JAAS configuration using secrets from Vault.
 *   Starts a 3-node Kafka cluster with SASL authentication.
 
@@ -44,8 +47,8 @@ Once Vault is running and populated, you can start the other services. The start
 ```bash
 ./mysql-local/up.sh
 ```
-*   Fetches root, admin, and user passwords from Vault.
-*   Starts a MySQL 8.0 instance.
+*   **Auto-generates** `infras/mysql/root` credential if missing.
+*   Starts a MySQL 8.0 instance with the generated root password.
 
 #### Redis
 
@@ -71,7 +74,7 @@ Each service directory (`kafka-local`, `mysql-local`, `redis-local`, `vault-loca
 *   `redis-local/`: Redis Cluster configuration.
 *   `volumes/`: Persistent data storage for containers (created automatically).
 *   `vault_keys.txt`: Generated file containing Vault keys (do not commit this).
-*   `local.env`: Local environment variables (do not commit this).
+*   `vault_keys.txt`: Generated file containing Vault keys (do not commit this).
 
 ## User & ACL Management
 
@@ -109,3 +112,20 @@ The script generates a **Vault Token** that grants the application access to:
 *   `postgres`
 *   `redis` (Updates ACL file; reload may be required)
 *   `kafka` (Updates JAAS file; restart required)
+
+### Utility Scripts
+*   `vault-local/generate_token.sh <app_name>`: Generates a Vault token for an application, creating the necessary `app-<name>` policy to access `infras/+/<app_name>` and `apps/<app_name>`.
+
+## Cross-Service Access Restrictions
+
+Strict isolation rules are implemented to prevent services from accessing each other's data.
+
+### Redis
+*   **Keys**: Application users are restricted to keys matching `service_name:*`.
+*   **Policy**: Implicit Deny for all other keys.
+
+### Kafka
+*   **Topics/Groups**: Application users are restricted to Topics and Consumer Groups matching `service_name-*`.
+*   **Mechanism**: Uses KRaft `StandardAuthorizer`.
+*   **Privileged Users**: `admin` and `kafka-X` (Broker Users).
+*   **Controller Security**: The Controller listener is secured with SASL_PLAINTEXT and unique broker credentials.
