@@ -146,7 +146,8 @@ create_policy() {
     # Support both KV v1 and v2 paths to be robust
     local policy_content="
 # Apps (v1 + v2)
-path \"apps/${app_name}/*\" { capabilities = [\"read\", \"list\"] }
+path \"apps/data/${app_name}\" { capabilities = [\"read\", \"list\"] }
+path \"apps/metadata/${app_name}\" { capabilities = [\"read\", \"list\"] }
 path \"apps/data/${app_name}/*\" { capabilities = [\"read\", \"list\"] }
 
 # Infras (v1 + v2)
