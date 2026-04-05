@@ -74,8 +74,9 @@ for KEY in $UNSEAL_KEYS; do
     echo "→ Using unseal key $KEY_COUNT of $THRESHOLD..."
     OUTPUT=$(kubectl exec -n infras-vault "$POD_NAME" -- vault operator unseal "$KEY" 2>&1)
 
-    if echo "$OUTPUT" | grep -q "Unseal Key"; then
-        echo "  ✅ Key accepted"
+    # Check if unseal was successful (either progress or already unsealed)
+    if echo "$OUTPUT" | grep -q "Unseal Progress\|Sealed.*false"; then
+        echo "  ✅ Key accepted (Progress: $KEY_COUNT/$THRESHOLD)"
     else
         echo "  ❌ Error: $OUTPUT"
         exit 1

@@ -7,13 +7,22 @@ PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export MINIKUBE_HOME="$PROJECT_ROOT/volumes/minikube/state"
 
 echo "Stopping minikube in $MINIKUBE_HOME..."
+
+# Stop minikube
+echo "🛑 Stopping minikube..."
 minikube stop
 
-# 2. Cleanup volume mount processes
-MOUNT_SOURCE="$PROJECT_ROOT/volumes/minikube/data"
-echo "Killing volume mount process..."
-pkill -f "minikube mount $MOUNT_SOURCE:/data" || true
+# Stop ingress forwarder if running
+echo "🔧 Checking ingress forwarder..."
+if docker ps | grep -q "minikube-ingress-forwarder"; then
+  echo "🛑 Stopping ingress forwarder..."
+  docker stop minikube-ingress-forwarder || true
+  echo "✅ Ingress forwarder stopped"
+else
+  echo "✅ No ingress forwarder running"
+fi
 
 echo "--------------------------------------------------------"
-echo "Minikube stopped."
+echo "✅ Minikube stopped safely."
+echo "💡 State preserved in: $MINIKUBE_HOME"
 echo "--------------------------------------------------------"

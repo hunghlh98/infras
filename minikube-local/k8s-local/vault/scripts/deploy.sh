@@ -45,8 +45,9 @@ kubectl apply -f "$VAULT_DIR/statefulset.yaml"
 echo ""
 echo "✅ Vault deployed successfully!"
 echo ""
-echo "Waiting for Vault pod to be ready..."
-kubectl wait --for=condition=ready pod -l app=vault -n infras-vault --timeout=120s
+echo "Waiting for Vault pod to be running..."
+kubectl wait --for=jsonpath='.status.phase'=Running pod -l app=vault -n infras-vault --timeout=120s
+echo "✅ Vault is running (not yet initialized)"
 
 echo ""
 echo "════════════════════════════════════════════════════════════"

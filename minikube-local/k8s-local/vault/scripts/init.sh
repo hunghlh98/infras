@@ -28,10 +28,10 @@ fi
 echo "→ Found Vault pod: $POD_NAME"
 echo ""
 
-# Wait for Vault to be ready
+# Wait for Vault pod to be running (not Ready, since Vault isn't initialized yet)
 echo "→ Waiting for Vault pod to be running..."
-kubectl wait --for=condition=running pod "$POD_NAME" -n infras-vault --timeout=60s
-echo "✅ Vault is running"
+kubectl wait --for=jsonpath='.status.phase'=Running pod "$POD_NAME" -n infras-vault --timeout=120s
+echo "✅ Vault is running (ready for initialization)"
 echo ""
 
 # Check if already initialized
