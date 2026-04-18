@@ -74,180 +74,267 @@ autoload -U add-zsh-hook
 add-zsh-hook preexec _infras_preexec
 add-zsh-hook precmd _infras_precmd
 
-# Interactive commands for statistics
-infras_stats() {
-    local today_log="$INFRAS_LOG_DIR/commands-$(date +%Y%m%d).log"
-    if [[ -f "$today_log" ]]; then
-        echo "📊 Today's Command Statistics:"
-        echo "================================"
-        echo "Session: $INFRAS_SESSION_ID"
-        echo "Project: $INFRAS_TRACKING_DIR"
-        echo ""
+# Single command interface with flags
+infras() {
+    local FLAG=""
+    local LIMIT=20
+    local DAYS=1
+    local PATTERN=""
 
-        local cmd_count
-        cmd_count=$(grep -c "=== COMMAND LOG ===" "$today_log" 2>/dev/null || echo "0")
-        echo "Commands executed: $cmd_count"
-        echo ""
-
-        # Count success vs failure
-        local success failed
-        success=$(grep -c "Exit Code:   0" "$today_log" 2>/dev/null || echo "0")
-        failed=$((cmd_count - success))
-        if [[ $cmd_count -gt 0 ]]; then
-            local success_rate=$((success * 100 / cmd_count))
-            echo "Success rate: $success_rate% ($success successful, $failed failed)"
-            echo ""
-        fi
-
-        # Count by directory
-        echo "Commands by directory:"
-        grep "Directory:" "$today_log" 2>/dev/null | sort | uniq -c | sort -rn | head -5
-        echo ""
-
-        # Recent commands (using improved parsing)
-        echo "Recent commands (last 3):"
-        grep -A 8 "=== COMMAND LOG ===" "$today_log" 2>/dev/null | awk -v count="3" '
-            BEGIN { cmd_count = 0 }
-            /^=== COMMAND LOG ===/ {
-                if (cmd_count >= count) exit
-                cmd_count++
-                getline; getline; getline; directory = $2
-                getline; getline; getline; getline; getline
-                gsub(/^Command:     /, "", $0)
-                cmd = $0
-                printf "   • [%s] %s\n", directory, cmd
-            }
-        '
-    else
-        echo "No commands logged yet today."
-        echo "Log file: $today_log"
-    fi
-}
-
-infras_search() {
-    local search_term="$1"
-    local days="${2:-7}"
-
-    if [[ -z "$search_term" ]]; then
-        echo "Usage: infras_search <search-term> [days]"
-        return 1
-    fi
-
-    echo "🔍 Searching for: '$search_term' (last $days days)"
-    echo "=========================================="
-    echo ""
-
-    for ((i=0; i<days; i++)); do
-        local log_date
-        log_date=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
-        local log_file="$INFRAS_LOG_DIR/commands-$log_date.log"
-
-        if [[ -f "$log_file" ]]; then
-            local results
-            results=$(grep -i "$search_term" "$log_file" 2>/dev/null)
-            if [[ -n "$results" ]]; then
-                echo "📅 $log_date:"
-                echo "$results"
-                echo ""
-            fi
-        fi
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stats|-s)
+                FLAG="stats"
+                shift
+                ;;
+            --top|-t)
+                FLAG="top"
+                shift
+                ;;
+            --recent|-r)
+                FLAG="recent"
+                shift
+                ;;
+            --search|-S)
+                FLAG="search"
+                shift
+                PATTERN="$1"
+                shift
+                ;;
+            --raw)
+                FLAG="raw"
+                shift
+                ;;
+            --help|-h)
+                _infras_show_help
+                return 0
+                ;;
+            --limit=*)
+                LIMIT="${1#*=}"
+                shift
+                ;;
+            --days=*)
+                DAYS="${1#*=}"
+                shift
+                ;;
+            *)
+                echo "❌ Unknown option: $1"
+                _infras_show_help
+                return 1
+                ;;
+        esac
     done
+
+    # Default: show help
+    if [[ -z "$FLAG" ]]; then
+        _infras_show_help
+        return 0
+    fi
+
+    # Execute command
+    case "$FLAG" in
+        stats) _infras_stats "$DAYS" ;;
+        top) _infras_top "$DAYS" "$LIMIT" ;;
+        recent) _infras_recent "$LIMIT" ;;
+        search) _infras_search "$PATTERN" "$DAYS" ;;
+        raw) _infras_raw "$LIMIT" ;;
+    esac
 }
 
-infras_top() {
-    local days="${1:-7}"
+_infras_show_help() {
+    cat << 'EOF'
+╔════════════════════════════════════════════════════════════╗
+║  Infras Command Tracking                                   ║
+╚════════════════════════════════════════════════════════════╝
+
+Usage: infras [flag] [options]
+
+Flags:
+  --stats, -s       Show today's statistics
+  --top, -t         Show most used commands
+  --recent, -r      Show recent commands
+  --search, -S      Search command history
+  --raw             Show raw log entries
+  --help, -h        Show this help
+
+Options:
+  --limit=N         Limit results (default: 20)
+  --days=N          Number of days (default: 1)
+
+Examples:
+  infras                    Show this help
+  infras --stats            Today's statistics
+  infras --top              Most used commands
+  infras --recent           Recent commands
+  infras --search kubectl   Search for "kubectl"
+  infras --top --limit=10   Top 10 commands
+  infras --stats --days=7   Weekly statistics
+
+EOF
+}
+
+_infras_stats() {
+    local days="${1:-1}"
     local temp_file=$(mktemp)
 
-    echo "🏆 Top Commands (last $days days)"
+    echo "📊 Statistics (Last $days day(s))"
     echo "================================"
     echo ""
 
-    # Extract commands from all log files
+    # Collect logs
     for ((i=0; i<days; i++)); do
         local log_date
         log_date=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
         local log_file="$INFRAS_LOG_DIR/commands-$log_date.log"
+        if [[ -f "$log_file" ]]; then
+            grep "^Command:" "$log_file" 2>/dev/null >> "$temp_file"
+            grep "^Exit Code:" "$log_file" 2>/dev/null >> "$temp_file"
+        fi
+    done
 
+    if [[ ! -s "$temp_file" ]]; then
+        echo "No commands found."
+        rm -f "$temp_file"
+        return
+    fi
+
+    local total=$(grep -c "^Command:" "$temp_file" 2>/dev/null || echo "0")
+    local success=$(grep -c "Exit Code:   0" "$temp_file" 2>/dev/null || echo "0")
+    local failed=$((total - success))
+
+    echo "Total Commands:    $total"
+    echo "Successful:        $success"
+    echo "Failed:            $failed"
+
+    if [[ $total -gt 0 ]]; then
+        local rate=$((success * 100 / total))
+        echo "Success Rate:       ${rate}%"
+    fi
+    echo ""
+
+    # Top directories
+    echo "Top Directories:"
+    for ((i=0; i<days; i++)); do
+        local log_date
+        log_date=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
+        local log_file="$INFRAS_LOG_DIR/commands-$log_date.log"
+        if [[ -f "$log_file" ]]; then
+            grep "^Directory:" "$log_file" 2>/dev/null
+        fi
+    done | sort | uniq -c | sort -rn | head -5 | awk '{printf "  %3d  %s\n", $1, $2}'
+
+    rm -f "$temp_file"
+}
+
+_infras_top() {
+    local days="${1:-7}"
+    local limit="${2:-20}"
+    local temp_file=$(mktemp)
+
+    echo "🏆 Top Commands (Last $days days)"
+    echo "================================"
+    echo ""
+
+    for ((i=0; i<days; i++)); do
+        local log_date
+        log_date=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
+        local log_file="$INFRAS_LOG_DIR/commands-$log_date.log"
         if [[ -f "$log_file" ]]; then
             grep "^Command:" "$log_file" 2>/dev/null >> "$temp_file"
         fi
     done
 
     if [[ -s "$temp_file" ]]; then
-        sort "$temp_file" | uniq -c | sort -rn | head -20
+        sort "$temp_file" | uniq -c | sort -rn | head -n "$limit" | \
+            awk '{printf "  %3d  %s\n", $1, substr($0, index($0,$2))}'
     else
-        echo "No commands found in the last $days days."
+        echo "No commands found."
     fi
 
     rm -f "$temp_file"
 }
 
-infras_recent() {
-    local count="${1:-10}"
+_infras_recent() {
+    local limit="${1:-20}"
+    local today_log="$INFRAS_LOG_DIR/commands-$(date +%Y%m%d).log"
 
-    echo "🕐 Recent Commands (last $count)"
+    echo "🕐 Recent Commands"
+    echo "=================="
+    echo ""
+
+    if [[ ! -f "$today_log" ]]; then
+        echo "No commands logged yet today."
+        return
+    fi
+
+    grep -A 8 "=== COMMAND LOG ===" "$today_log" 2>/dev/null | awk -v count="$limit" '
+        BEGIN { cmd_count = 0 }
+        /^=== COMMAND LOG ===/ {
+            if (cmd_count >= count) exit
+            cmd_count++
+            getline
+            timestamp = $2 " " $3
+            getline
+            getline
+            directory = $2
+            getline
+            getline
+            exit_code = $NF
+            getline
+            getline
+            gsub(/^Command:     /, "", $0)
+            cmd = $0
+
+            symbol = (exit_code != 0) ? "❌" : "✅"
+            printf "%s [%s] %s\n", timestamp, directory, cmd
+            if (exit_code != 0) printf "   %s Exit: %s\n", symbol, exit_code
+            print ""
+        }
+    '
+}
+
+_infras_search() {
+    local pattern="$1"
+    local days="${2:-1}"
+
+    if [[ -z "$pattern" ]]; then
+        echo "❌ Search pattern required"
+        echo "Usage: infras --search <pattern> [--days=N]"
+        return 1
+    fi
+
+    echo "🔍 Search: \"$pattern\" (Last $days days)"
+    echo "========================================"
+    echo ""
+
+    local found=0
+    for ((i=0; i<days; i++)); do
+        local log_date
+        log_date=$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d)
+        local log_file="$INFRAS_LOG_DIR/commands-$log_date.log"
+
+        if [[ -f "$log_file" ]]; then
+            while IFS= read -r line; do
+                if [[ "$line" == Command:*"$pattern"* ]]; then
+                    echo "  ${line#Command:     }"
+                    ((found++))
+                fi
+            done < "$log_file"
+        fi
+    done
+
+    [[ $found -eq 0 ]] && echo "No matches found."
+}
+
+_infras_raw() {
+    local count="${1:-5}"
+    local today_log="$INFRAS_LOG_DIR/commands-$(date +%Y%m%d).log"
+
+    echo "🔍 Raw Log Entries (Last $count)"
     echo "================================"
     echo ""
 
-    local today_log="$INFRAS_LOG_DIR/commands-$(date +%Y%m%d).log"
-    if [[ -f "$today_log" ]]; then
-        # Use grep to find command blocks, then parse with awk
-        grep -A 8 "=== COMMAND LOG ===" "$today_log" 2>/dev/null | awk -v count="$count" '
-            BEGIN { cmd_count = 0 }
-            /^=== COMMAND LOG ===/ {
-                if (cmd_count >= count) exit
-                cmd_count++
-                getline # Timestamp: line
-                timestamp = $2 " " $3
-                getline # Session: line (skip)
-                getline # Directory: line
-                directory = $2
-                getline # Git Branch: line (skip)
-                getline # Exit Code: line
-                exit_code = $NF
-                getline # Duration: line (skip)
-                getline # Command: line
-                gsub(/^Command:     /, "", $0)
-                cmd = $0
-
-                printf "🔹 %s\n", timestamp
-                printf "   [%s] %s\n", directory, cmd
-                if (exit_code != 0) printf "   ❌ Exit code: %s\n", exit_code
-                print ""
-            }
-        '
-    else
-        echo "No commands logged yet today."
-    fi
-}
-
-infras_summary() {
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║  Infras Command Tracker                                  ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "Session:       $INFRAS_SESSION_ID"
-    echo "Tracking dir:  $INFRAS_TRACKING_DIR"
-    echo "Log directory: $INFRAS_LOG_DIR"
-    echo ""
-    echo "Available commands:"
-    echo "  infras_stats    - Show today's statistics"
-    echo "  infras_search   - Search command history"
-    echo "  infras_top      - Show most used commands"
-    echo "  infras_recent   - Show recent commands"
-    echo "  infras_raw      - Show raw log entries (debug)"
-    echo "  infras_summary  - Show this help"
-    echo ""
-}
-
-# Debug function to show raw log entries
-infras_raw() {
-    local count="${1:-5}"
-    echo "🔍 Raw Log Entries (last $count):"
-    echo "===================================="
-    echo ""
-
-    local today_log="$INFRAS_LOG_DIR/commands-$(date +%Y%m%d).log"
     if [[ -f "$today_log" ]]; then
         tail -n "$((count * 10))" "$today_log"
     else

@@ -60,88 +60,84 @@ Command:     ./scripts/backup.sh create
 
 ## 🎯 Available Commands
 
-Once tracking is enabled, you can use these commands:
+Once tracking is enabled, use the single `infras` command with flags:
 
-### `infras_stats` - Today's Statistics
+### `infras` (Default: Show Help)
 
 ```bash
-infras_stats
+infras                    # Show help
+```
+
+### `infras --stats` - Statistics
+
+```bash
+infras --stats            # Today's statistics
+infras --stats --days=7   # Weekly statistics
 ```
 
 Shows:
-- How many commands executed today
-- Commands by directory
-- Recent commands with details
+- Total commands executed
+- Success/failure counts
+- Success rate percentage
+- Top directories used
 
-### `infras_search` - Search Command History
-
-```bash
-# Search for specific commands
-infras_search "backup"
-
-# Search last 3 days
-infras_search "kubectl" 3
-
-# Search for errors
-infras_search "Exit Code: [1-9]"
-```
-
-### `infras_top` - Most Used Commands
+### `infras --top` - Most Used Commands
 
 ```bash
-# Top commands this week
-infras_top
-
-# Top commands last 30 days
-infras_top 30
+infras --top              # Top 20 commands
+infras --top --limit=10   # Top 10 commands
+infras --top --days=7     # Top commands this week
 ```
 
-Shows your most frequently used commands ranked by usage.
-
-### `infras_recent` - Recent Commands
+### `infras --recent` - Recent Commands
 
 ```bash
-# Last 10 commands (default)
-infras_recent
-
-# Last 20 commands
-infras_recent 20
+infras --recent           # Last 20 commands
+infras --recent --limit=5 # Last 5 commands
 ```
 
-Shows your most recent commands with full details.
+Shows recent commands with timestamps, directories, and exit status.
 
-### `infras_summary` - Help & Status
+### `infras --search` - Search Command History
 
 ```bash
-infras_summary
+infras --search kubectl   # Search for "kubectl"
+infras --search "backup" --days=7  # Search this week
 ```
 
-Shows available commands and current tracking status.
+### `infras --raw` - Raw Log Entries
+
+```bash
+infras --raw              # Last 5 raw entries
+infras --raw --limit=10   # Last 10 raw entries
+```
+
+Shows raw log data for debugging.
 
 ## 🔍 Search Examples
 
 ### Find All Backup Operations
 
 ```bash
-infras_search "backup.sh"
+infras --search "backup.sh"
 ```
 
 ### Find Failed Commands
 
 ```bash
-infras_search "Exit Code: [1-9]"
+infras --search "Exit Code: [1-9]"
 ```
 
 ### Find kubectl Commands
 
 ```bash
-infras_search "kubectl"
+infras --search "kubectl"
 ```
 
 ### Find Git Operations
 
 ```bash
-infras_search "git"
+infras --search "git"
 ```
 
 ## 📈 Use Cases
@@ -158,35 +154,35 @@ kubectl get pods -n infras-postgres
 ./scripts/backup.sh list
 
 # Check what you did
-infras_stats
+infras --stats
 ```
 
 ### 2. Remember What You Did Yesterday
 
 ```bash
 # Search for commands from a specific day
-infras_search "2026-04-18" 2
+infras --search "2026-04-18" 2
 ```
 
 ### 3. Find That Command You Used Last Week
 
 ```bash
 # Search for keywords
-infras_search "minikube" 7
+infras --search "minikube" 7
 ```
 
 ### 4. Analyze Your Workflow
 
 ```bash
 # See your most used commands
-infras_top 7
+infras --top 7
 ```
 
 ### 5. Debug Issues
 
 ```bash
 # Find failed commands
-infras_search "Exit Code: [1-9]" 7
+infras --search "Exit Code: [1-9]" 7
 ```
 
 ## 🔧 Advanced Usage
@@ -319,27 +315,27 @@ See how long your commands take:
 cd /home/hunghlh/app/infras
 
 # Check what you did yesterday
-infras_recent 20
+infras --recent 20
 
 # Start working
 cd minikube-local
 ./up.sh
 
 # Check your session so far
-infras_stats
+infras --stats
 ```
 
 ### Weekly Review
 
 ```bash
 # See your week in review
-infras_top 7
+infras --top 7
 
 # Find all failed commands
-infras_search "Exit Code: [1-9]" 7
+infras --search "Exit Code: [1-9]" 7
 
 # See your most active directories
-infras_stats
+infras --stats
 ```
 
 ### Project Handoff
@@ -354,7 +350,7 @@ grep -h "^Command:" /home/hunghlh/app/infras/.command-logs/commands-*.log > hand
 ### Combine with `fzf` for fuzzy search
 
 ```bash
-infras_search "" 30 | fzf
+infras --search "" 30 | fzf
 ```
 
 ### Use with `jq` for JSON parsing
@@ -368,7 +364,7 @@ cat commands-*.log | jq '.command' | sort | uniq -c
 
 ```bash
 # Log commands to your todo system
-infras_recent 5 >> todo.txt
+infras --recent 5 >> todo.txt
 ```
 
 ## 📞 Support
