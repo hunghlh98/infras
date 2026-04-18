@@ -161,14 +161,32 @@ kubectl rollout restart deployment/postgres -n infras-postgres
 
 ## 🗄️ Backup & Recovery
 
-### Backup Database
+**🎉 NEW:** Automated backup script with compression, scheduling, and retention!
+
+### Quick Start (Recommended)
+
+```bash
+# Create a compressed backup
+./scripts/backup.sh create
+
+# List all backups
+./scripts/backup.sh list
+
+# Setup automated daily backups
+./scripts/backup.sh schedule
+
+# See full guide
+cat BACKUP_GUIDE.md
+```
+
+### Manual Backup (Simple)
 
 ```bash
 kubectl exec -n infras-postgres deployment/postgres -- \
   pg_dump -U postgres postgres > postgres-backup.sql
 ```
 
-### Restore Database
+### Manual Restore (Simple)
 
 ```bash
 cat postgres-backup.sql | kubectl exec -i -n infras-postgres deployment/postgres -- \
@@ -181,6 +199,18 @@ cat postgres-backup.sql | kubectl exec -i -n infras-postgres deployment/postgres
 kubectl delete pvc postgres-data -n infras-postgres
 ./scripts/deploy.sh
 ```
+
+### Advanced Backup Options
+
+The new backup script supports:
+- ✅ Compressed backups (~80% space savings)
+- ✅ Automated daily backups via cron
+- ✅ Backup verification and integrity checking
+- ✅ Automatic cleanup (keeps last 7 days)
+- ✅ Restore from any backup
+- ✅ Detailed logging
+
+**Full documentation:** [BACKUP_GUIDE.md](./BACKUP_GUIDE.md)
 
 ---
 

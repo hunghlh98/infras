@@ -80,21 +80,51 @@ fi
 if ! docker ps | grep -q "minikube-ingress-forwarder"; then
   echo "🔧 Starting ingress forwarder for port 8080 access..."
 
-  # Wait for ingress controller to be ready and get NodePort
-  echo "⏳ Waiting for ingress controller..."
-  timeout 30 bash -c 'until kubectl get svc -n ingress-nginx ingress-nginx-controller &>/dev/null; do sleep 1; done'
+  # Check if a stopped container exists - try to start it first (faster!)
+  if docker ps -a | grep -q "minikube-ingress-forwarder"; then
+    echo "🔄 Found stopped ingress forwarder, restarting..."
+    if docker start minikube-ingress-forwarder >/dev/null 2>&1; then
+      echo "✅ Ingress forwarder restarted on port 8080"
+    else
+      # If start fails, remove the broken container and create new one
+      echo "🧹 Removing broken ingress forwarder container..."
+      docker rm minikube-ingress-forwarder >/dev/null 2>&1 || true
 
-  INGRESS_PORT=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}')
+      # Wait for ingress controller to be ready and get NodePort
+      echo "⏳ Waiting for ingress controller..."
+      timeout 30 bash -c 'until kubectl get svc -n ingress-nginx ingress-nginx-controller &>/dev/null; do sleep 1; done'
 
-  if [ -n "$INGRESS_PORT" ]; then
-    docker run -d --name minikube-ingress-forwarder \
-      --network minikube \
-      -p 8080:80 \
-      alpine/socat \
-      TCP-LISTEN:80,fork,reuseaddr TCP:$(minikube ip):${INGRESS_PORT} || \
-      echo "⚠️  Failed to start ingress forwarder (may already exist)"
+      INGRESS_PORT=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}')
+
+      if [ -n "$INGRESS_PORT" ]; then
+        docker run -d --name minikube-ingress-forwarder \
+          --network minikube \
+          -p 8080:80 \
+          alpine/socat \
+          TCP-LISTEN:80,fork,reuseaddr TCP:$(minikube ip):${INGRESS_PORT}
+        echo "✅ Ingress forwarder created on port 8080"
+      else
+        echo "⚠️  Could not determine ingress NodePort"
+      fi
+    fi
   else
-    echo "⚠️  Could not determine ingress NodePort"
+    # No existing container, create new one
+    # Wait for ingress controller to be ready and get NodePort
+    echo "⏳ Waiting for ingress controller..."
+    timeout 30 bash -c 'until kubectl get svc -n ingress-nginx ingress-nginx-controller &>/dev/null; do sleep 1; done'
+
+    INGRESS_PORT=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}')
+
+    if [ -n "$INGRESS_PORT" ]; then
+      docker run -d --name minikube-ingress-forwarder \
+        --network minikube \
+        -p 8080:80 \
+        alpine/socat \
+        TCP-LISTEN:80,fork,reuseaddr TCP:$(minikube ip):${INGRESS_PORT}
+      echo "✅ Ingress forwarder created on port 8080"
+    else
+      echo "⚠️  Could not determine ingress NodePort"
+    fi
   fi
 else
   echo "✅ Ingress forwarder already running"

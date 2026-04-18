@@ -15,8 +15,8 @@ minikube stop
 # Stop ingress forwarder if running
 echo "🔧 Checking ingress forwarder..."
 if docker ps | grep -q "minikube-ingress-forwarder"; then
-  echo "🛑 Stopping ingress forwarder..."
-  docker stop minikube-ingress-forwarder || true
+  echo "🛑 Stopping ingress forwarder (keeping container for fast restart)..."
+  docker stop minikube-ingress-forwarder >/dev/null 2>&1 || true
   echo "✅ Ingress forwarder stopped"
 else
   echo "✅ No ingress forwarder running"
