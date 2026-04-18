@@ -364,6 +364,9 @@ infras_chpwd() {
 # Register directory change hook
 add-zsh-hook chpwd infras_chpwd
 
+# Cleanup old function names from previous versions
+unset -f infras_stats infras_search infras_top infras_recent infras_raw infras_summary 2>/dev/null
+
 # Initialize on startup
 infras_chpwd
 
