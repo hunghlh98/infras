@@ -222,7 +222,7 @@ _infras_stats() {
         if [[ -f "$log_file" ]]; then
             grep "^Directory:" "$log_file" 2>/dev/null
         fi
-    done | sort | uniq -c | sort -rn | head -5 | awk '{printf "  %3d  %s\n", $1, $2}'
+    done | sed 's/^Directory:[[:space:]]*//' | sort | uniq -c | sort -rn | head -5 | awk '{printf "  %3d  %s\n", $1, $2}'
 
     rm -f "$temp_file"
 }
@@ -370,6 +370,6 @@ infras_chpwd
 # Notification message (only show once per session)
 if [[ -z "$INFRAS_TRACKER_INITIALIZED" ]]; then
     echo "✅ Command tracking active for /home/hunghlh/app/infras/"
-    echo "   Type 'infras_summary' for available commands"
+    echo "   Type 'infras' for available commands"
     export INFRAS_TRACKER_INITIALIZED=1
 fi
