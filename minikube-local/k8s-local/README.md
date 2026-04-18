@@ -2,8 +2,6 @@
 
 Complete Kubernetes infrastructure running on MiniKube for local development and testing.
 
----
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -36,12 +34,12 @@ kubectl get pods --all-namespaces
 │  │           Namespaces                                 │   │
 │  │  • infras-monitoring  (Prometheus, Grafana)         │   │
 │  │  • infras-vault      (HashiCorp Vault)              │   │
-│  │  • infras-kafka      (Kafka Cluster)                │   │
-│  │  • infras-mysql      (MySQL Database)               │   │
 │  │  • infras-postgres   (PostgreSQL Database)          │   │
+│  │  • infras-cli        (Infras CLI App)               │   │
+│  │  • infras-mysql      (MySQL Database)               │   │
 │  │  • infras-redis      (Redis Cluster)                │   │
+│  │  • infras-kafka      (Kafka Cluster)                │   │
 │  │  • infras-keycloak   (Keycloak Identity)            │   │
-│  │  • infras-management (Infras CLI App)               │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                            │                                  │
 │  ┌──────────────────────────────────────────────────────┐   │

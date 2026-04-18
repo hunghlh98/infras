@@ -15,3 +15,9 @@ minikube-local/k8s-local/.vault-init/
 
 # Binaries generated during build
 minikube-local/k8s-local/infras-cli/kubectl
+
+# PostgreSQL backups
+minikube-local/k8s-local/postgres/backups/
+*.backup
+*.sql.gz
+*.dump

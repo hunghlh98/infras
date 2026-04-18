@@ -1,143 +1,159 @@
-# Local Infrastructure Setup
+# Infrastructure Repository
 
-This repository contains scripts and Docker Compose configurations to set up a local development infrastructure including Vault, Kafka, MySQL, and Redis.
+Local development infrastructure with **2 deployment models**:
+- **MiniKube** (recommended): Kubernetes-based, production-like
+- **Docker Compose** (legacy): Simple, single-service development
 
-## Prerequisites
+## Quick Start
 
-*   Docker & Docker Compose
-*   `jq` (JSON processor)
-
-## Getting Started
-
-### 1. Start Vault & Initialize Secrets
-
-Vault is used to manage secrets for other services. It must be started and initialized first.
-
+### MiniKube (Recommended)
 ```bash
-# Start Vault service
-./vault-local/up.sh
-
-# Initialize Vault and auto-generate secrets
-./vault-local/init_vault.sh
+cd minikube-local && ./up.sh          # Start cluster
+kubectl get pods -A | grep infras     # Verify services
 ```
 
-This process will:
-*   Start a Vault container.
-*   Initialize and unseal Vault.
-*   Save unseal keys and root token to `vault_keys.txt`.
-*   Enable `userpass` authentication and create a `chown` admin user.
-*   Save the `chown` UI login credentials to `vault_chown.txt`.
-*   Enables `infras/` and `apps/` secret engines.
-*   **Note**: This script **does not** generate secrets. Services will generate their own secrets upon startup.
-
-### 3. Start Other Services
-
-Once Vault is running and populated, you can start the other services. The startup scripts will automatically fetch credentials from Vault.
-
-#### Kafka
-
+### Docker Compose (Legacy)
 ```bash
-./kafka-local/up.sh
+./vault-local/up.sh && ./vault-local/init_vault.sh
+./postgres-local/up.sh                # Start other services
 ```
-*   **Auto-generates** `infras/kafka/sasl` credential if missing.
-*   Generates JAAS configuration using secrets from Vault.
-*   Starts a 3-node Kafka cluster with SASL authentication.
 
-#### Keycloak
+## Deployment Models
 
+| Model | Status | Use Case | Services |
+|-------|--------|----------|----------|
+| **MiniKube** | Active (32%) | Production-like, team workflows | 3 of 8 deployed |
+| **Docker** | Stable | Simple local dev | 6 services |
+
+## Current Status
+
+### MiniKube Deployment
+| Service | Status | Pods | Access |
+|---------|--------|------|--------|
+| Vault | ✅ Running | 1/1 | `kubectl port-forward svc/vault 8200:8200 -n infras-vault` |
+| PostgreSQL | ✅ Running | 2/2 | `kubectl port-forward svc/postgres 5433:5432 -n infras-postgres` |
+| Infras-CLI | ✅ Running | 1/1 | `kubectl port-forward svc/infras-cli 8080:80 -n infras-cli` |
+| Monitoring | ❌ Not deployed | - | Planned |
+| MySQL | 🚧 Planned | - | - |
+| Redis | 🚧 Planned | - | - |
+| Kafka | 🚧 Planned | - | - |
+| Keycloak | 🚧 Planned | - | - |
+
+### Docker Compose Services
+All 6 services stable: `vault-local`, `postgres-local`, `mysql-local`, `kafka-local`, `redis-local`, `keycloak-local`
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **[STATUS.md](STATUS.md)** | Current deployment status |
+| **[GETTING_STARTED.md](GETTING_STARTED.md)** | Detailed setup guides |
+| **[SERVICE_ACCESS.md](SERVICE_ACCESS.md)** | Service URLs & credentials |
+| **[minikube-local/k8s-local/README.md](minikube-local/k8s-local/README.md)** | MiniKube full docs |
+| **[MIGRATION_PLAN.md](MIGRATION_PLAN.md)** | Docker → MiniKube migration |
+| **[TASKS.md](TASKS.md)** | Implementation tasks (34/105 done) |
+
+## Quick Reference
+
+### Cluster Management (Kubernetes)
 ```bash
-./keycloak-local/up.sh
+./minikube-local/up.sh                  # Start cluster
+./minikube-local/down.sh                # Stop (preserves state)
+minikube status                         # Check cluster health
 ```
-*   **Auto-generates** missing Keycloak Admin and DB credentials using Vault.
-*   Automatically configures its PostgreSQL database connection.
-*   Starts a Keycloak 26 Local Server to provide Auth & SSO functionality.
 
-#### MySQL
-
+### Service Deployment (Infras)
 ```bash
-./mysql-local/up.sh
+infras-cli deploy postgres              # Deploy service
+infras-cli status all                   # Check all services
+cd k8s-local/postgres && ./scripts/deploy.sh  # Manual deploy
 ```
-*   **Auto-generates** `infras/mysql/root` credential if missing.
-*   Starts a MySQL 8.0 instance with the generated root password.
 
-#### Redis
-
+### Service Status (Kubernetes)
 ```bash
-./redis-local/up.sh
+kubectl get pods -A | grep infras       # All infras pods
+kubectl get svc -A | grep infras       # All infras services
+kubectl get ingress -A                  # Access URLs
 ```
-*   Fetches the Redis password from Vault.
-*   Starts a 3-node Redis Cluster.
 
-## Service Management
+### Service Access (Kubernetes)
+```bash
+# Port-forward to local
+kubectl port-forward svc/postgres 5433:5432 -n infras-postgres
 
-Each service directory (`kafka-local`, `mysql-local`, `redis-local`, `vault-local`) contains helper scripts:
+# Shell into pod
+kubectl exec -it postgres-0 -n infras-postgres -- psql -U postgres
 
-*   `up.sh`: Start the service.
-*   `down.sh`: Stop and remove the service containers.
-*   `reset.sh`: Stop the service and remove data volumes (use with caution).
+# View logs
+kubectl logs -f deployment/postgres -n infras-postgres
+```
 
-## Directory Structure
+### Legacy Docker Compose
+```bash
+./vault-local/up.sh && ./vault-local/init_vault.sh
+./postgres-local/up.sh
+docker ps | grep local                 # Check status
+```
 
-*   `vault-local/`: Vault configuration and initialization scripts.
-*   `kafka-local/`: Kafka cluster configuration.
-*   `keycloak-local/`: Keycloak identity and access management server.
-*   `mysql-local/`: MySQL configuration and initialization.
-*   `redis-local/`: Redis Cluster configuration.
-*   `volumes/`: Persistent data storage for containers (created automatically).
-*   `vault_keys.txt`: Generated file containing Vault keys (do not commit this).
-*   `vault_chown.txt`: Generated file containing Vault UI login credentials (do not commit this).
+## Architecture
+
+MiniKube deployment uses **8 namespaces** with resource quotas (8CPU/16GB RAM):
+- `infras-vault`: HashiCorp Vault for secrets
+- `infras-postgres`: PostgreSQL with metrics exporter
+- `infras-cli`: Infrastructure automation CLI
+- `infras-monitoring`: Prometheus, Grafana, Loki (planned)
+- `infras-mysql`, `infras-redis`, `infras-kafka`, `infras-keycloak`: Planned
+
+See [minikube-local/k8s-local/README.md](minikube-local/k8s-local/README.md) for details.
 
 ## User & ACL Management
 
-A pipeline is provided to create users and ACLs for applications consuming the shared infrastructure.
-
-### Scripts
-*   `bin/setup_acl.sh <app_name> <infra_type> [owner_username]`: Provisions a user, generates a Vault Token, and optionally enables a Multi-Tenant architecture if using Keycloak (`owner_username` dynamically creates a dedicated Keycloak Realm where that user is the Realm Admin).
-
-### Vault Structure
-*   `infras/<infra_type>/<app_name>`: Contains infrastructure credentials (e.g., DB password) generated by the script.
-*   `apps/<app_name>`: Dedicated path for application-specific secrets. The app has read/list access to this path.
-
-### Usage Example
-
-To provision a MySQL user for `payment-service`:
+Provision users and credentials for applications:
 
 ```bash
-./bin/setup_acl.sh payment-service mysql
+./bin/setup_acl.sh <app_name> <infra_type> [owner_username]
 ```
 
-**Output:**
-```text
-SERVICE: payment-service
-INFRA:   mysql
-SECRET:  infras/mysql/payment-service
-TOKEN:   hvs.EXAMPLETOKEN...
+**Example**: `./bin/setup_acl.sh payment-service mysql`
+
+Creates:
+- Vault token with restricted access
+- Credentials in `infras/<infra_type>/<app_name>`
+- App secrets path at `apps/<app_name>`
+
+**Supported**: `mysql`, `postgres`, `redis`, `kafka`, `keycloak`
+
+## Project Status
+
+- **MiniKube Migration**: 32% complete (34 of 105 tasks)
+- **Active Development**: Monitoring stack, MySQL, Redis, Kafka, Keycloak
+- **Production**: Vault, PostgreSQL, Infras-CLI stable
+
+See [TASKS.md](TASKS.md) for detailed task tracking.
+
+## Directory Structure
+
+```
+├── minikube-local/          # Kubernetes deployment (primary)
+│   ├── up.sh               # Start cluster
+│   ├── down.sh             # Stop cluster
+│   └── k8s-local/          # Service manifests & docs
+├── bin/                    # ACL setup scripts
+├── *-local/                # Docker Compose services (legacy)
+├── volumes/                # Persistent data
+└── *.md                    # Documentation
 ```
 
-The script generates a **Vault Token** that grants the application access to:
-1.  Its infrastructure credentials at `infras/+/<app_name>/*`
-2.  Its own secret path at `apps/<app_name>/*`
+## Which to Use?
 
-### Supported Infrastructure
-*   `keycloak` (Auto-creates Multi-Tenant Realms, Users with Realm-admin roles, and Client apps)
-*   `mysql`
-*   `postgres`
-*   `redis` (Updates ACL file; reload may be required)
-*   `kafka` (Updates JAAS file; restart required)
+**Choose MiniKube if you need**:
+- Production-like environment
+- Service mesh & monitoring
+- Team collaboration
+- Kubernetes deployment testing
 
-### Utility Scripts
-*   `vault-local/generate_token.sh <app_name>`: Generates a Vault token for an application, creating the necessary `app-<name>` policy to access `infras/+/<app_name>` and `apps/<app_name>`.
-
-## Cross-Service Access Restrictions
-
-Strict isolation rules are implemented to prevent services from accessing each other's data.
-
-### Redis
-*   **Keys**: Application users are restricted to keys matching `service_name:*`.
-*   **Policy**: Implicit Deny for all other keys.
-
-### Kafka
-*   **Topics/Groups**: Application users are restricted to Topics and Consumer Groups matching `service_name-*`.
-*   **Mechanism**: Uses KRaft `StandardAuthorizer`.
-*   **Privileged Users**: `admin` and `kafka-X` (Broker Users).
-*   **Controller Security**: The Controller listener is secured with SASL_PLAINTEXT and unique broker credentials.
+**Choose Docker if you need**:
+- Simple single-service development
+- Quick prototyping
+- Minimal resource usage
+- Familiar Docker Compose workflow
