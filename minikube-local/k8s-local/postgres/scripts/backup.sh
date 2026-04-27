@@ -107,6 +107,22 @@ get_user_databases() {
         grep -v '^[[:space:]]*$' || echo ""
 }
 
+# Get latest backup file for a database
+get_latest_backup() {
+    local database="$1"
+    ls -t "$BACKUP_DIR"/postgres-backup-"${database}"-*.sql.gz 2>/dev/null | head -n 1
+}
+
+# Calculate checksum of database dump (excluding changing metadata)
+calculate_checksum() {
+    local database="$1"
+    local password="$2"
+
+    kubectl exec -n "$NAMESPACE" deployment/"$DEPLOYMENT" -- \
+        bash -c "PGPASSWORD='$password' pg_dump -U '$USER' -d '$database' --format=plain --no-owner --no-acl" 2>/dev/null | \
+        grep -v '^--' | grep -v '^\\' | grep -v '^SET ' | grep -v '^$' | sort | md5sum | cut -d' ' -f1
+}
+
 # Create backup
 create_backup() {
     show_header
@@ -119,6 +135,7 @@ create_backup() {
     local databases
     local backup_count=0
     local failed_count=0
+    local skipped_count=0
 
     timestamp=$(date +"%Y%m%d-%H%M%S")
 
@@ -143,6 +160,37 @@ create_backup() {
 
     # Backup each database
     for database in $databases; do
+        log_info "Checking '$database' for changes..."
+
+        # Calculate current checksum
+        local current_checksum
+        current_checksum=$(calculate_checksum "$database" "$password")
+
+        if [ -z "$current_checksum" ]; then
+            log_error "Failed to calculate checksum for '$database'"
+            ((failed_count++)) || true
+            continue
+        fi
+
+        # Get latest backup for comparison
+        local latest_backup
+        latest_backup=$(get_latest_backup "$database")
+
+        if [ -n "$latest_backup" ]; then
+            # Calculate checksum of latest backup (using same filtering)
+            local latest_checksum
+            latest_checksum=$(gunzip -c "$latest_backup" | grep -v '^--' | grep -v '^\\' | grep -v '^SET ' | grep -v '^$' | sort | md5sum | cut -d' ' -f1)
+
+            # Compare checksums
+            if [ "$current_checksum" = "$latest_checksum" ]; then
+                log_warning "Skipped '$database': No changes since last backup"
+                log_info "Latest backup: $(basename "$latest_backup")"
+                ((skipped_count++)) || true
+                continue
+            fi
+        fi
+
+        # Data has changed or no previous backup exists
         local backup_file
         backup_file="$BACKUP_DIR/postgres-backup-${database}-${timestamp}.sql.gz"
 
@@ -173,6 +221,7 @@ create_backup() {
     echo ""
     log_info "Backup Summary:"
     echo "  Successful: $backup_count/$total_dbs"
+    echo "  Skipped:    $skipped_count/$total_dbs (no changes)"
     echo "  Failed:     $failed_count/$total_dbs"
     echo "  Timestamp:  $(date)"
 
