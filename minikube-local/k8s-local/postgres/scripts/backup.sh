@@ -78,20 +78,9 @@ check_prerequisites() {
     log_success "Prerequisites check passed"
 }
 
-# Get PostgreSQL password from Vault
+# Get PostgreSQL password from Kubernetes Secret
 get_password() {
-    local vault_pod
-
-    # Get Vault pod
-    vault_pod=$(kubectl get pod -n infras-vault -l app=vault -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-
-    if [ -z "$vault_pod" ]; then
-        log_error "Vault pod not found in infras-vault namespace"
-        exit 1
-    fi
-
-    # Get password from Vault
-    kubectl exec -n infras-vault "$vault_pod" -- vault kv get -field=password infras/postgres/auth 2>/dev/null | tr -d '\n'
+    kubectl get secret postgres-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d
 }
 
 # Get all user databases (exclude system databases)
