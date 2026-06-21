@@ -298,6 +298,40 @@ class KubernetesOperations:
             logger.error("Failed to update ConfigMap", name=name, error=str(e))
             raise
 
+    async def get_secret_data(
+        self,
+        namespace: str,
+        name: str,
+        key: str
+    ) -> str:
+        """
+        Get a specific value from a Secret.
+
+        Args:
+            namespace: Kubernetes namespace
+            name: Secret name
+            key: Key to retrieve
+
+        Returns:
+            Decoded Secret value as string
+        """
+        logger.debug("Getting Secret data", namespace=namespace, name=name, key=key)
+
+        try:
+            import base64
+            secret = self.core_v1.read_namespaced_secret(name, namespace)
+
+            if key not in secret.data:
+                raise KeyError(f"Key '{key}' not found in Secret '{name}'")
+
+            # Decode base64 value
+            value = base64.b64decode(secret.data[key]).decode('utf-8')
+            return value
+
+        except Exception as e:
+            logger.error("Failed to get Secret data", name=name, error=str(e))
+            raise
+
     async def update_secret(
         self,
         namespace: str,
@@ -322,12 +356,18 @@ class KubernetesOperations:
             # Get existing Secret
             secret = self.core_v1.read_namespaced_secret(name, namespace)
 
+            import base64
+
             # Update or append value
             if append and key in secret.data:
-                secret.data[key] = (secret.data[key] + "\n" + value).encode('utf-8')
+                # Decode existing base64 value, append new value, re-encode to base64
+                existing = base64.b64decode(secret.data[key]).decode('utf-8')
+                new_value = existing + "\n" + value
+                secret.data[key] = base64.b64encode(new_value.encode('utf-8')).decode('utf-8')
                 logger.debug("Appended to Secret key", key=key)
             else:
-                secret.data[key] = value.encode('utf-8')
+                # Encode new value to base64
+                secret.data[key] = base64.b64encode(value.encode('utf-8')).decode('utf-8')
                 logger.debug("Set Secret key", key=key)
 
             # Update Secret
