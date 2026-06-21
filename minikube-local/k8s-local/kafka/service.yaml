@@ -1,0 +1,64 @@
+---
+# Headless service for StatefulSet - required for DNS-based discovery
+# Includes both external (90xx) and internal (29xxx) ports
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: infras-kafka
+  labels:
+    app: kafka
+    component: broker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  # External ports - 9092-9094 PLAINTEXT, 9095-9097 SASL
+  - name: plaintext
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+  - name: external-sasl
+    port: 9095
+    targetPort: 9095
+    protocol: TCP
+  # Internal ports - 290xx series
+  - name: internal-sasl
+    port: 29095
+    targetPort: 29095
+    protocol: TCP
+  - name: broker
+    port: 29091
+    targetPort: 29091
+    protocol: TCP
+  - name: controller
+    port: 29093
+    targetPort: 29093
+    protocol: TCP
+
+---
+# ClusterIP service for external client access (90xx ports only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: infras-kafka
+  labels:
+    app: kafka
+    component: broker
+spec:
+  type: ClusterIP
+  ports:
+  - name: plaintext
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+  - name: external-sasl
+    port: 9095
+    targetPort: 9095
+    protocol: TCP
+  selector:
+    app: kafka
+    component: broker
+  sessionAffinity: None
