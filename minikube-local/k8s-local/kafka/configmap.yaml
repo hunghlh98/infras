@@ -28,7 +28,7 @@ data:
     #                          (a ClusterIP cannot address individual brokers in a multi-broker setup).
     #   INTERNAL_SASL:29095 -> localhost, for HOST access via `kubectl port-forward kafka-0 29095:29095`
     #   Never set EXTERNAL_SASL to localhost: in-cluster clients would reconnect to themselves and fail.
-    advertised.listeners=PLAINTEXT://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:9092,EXTERNAL_SASL://kafka.infras-kafka.svc.cluster.local:9095,INTERNAL_SASL://localhost:29095,BROKER://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:29091
+    advertised.listeners=PLAINTEXT://kafka.infras-kafka.svc.cluster.local:9092,EXTERNAL_SASL://kafka.infras-kafka.svc.cluster.local:9095,INTERNAL_SASL://localhost:29095,BROKER://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:29091
     inter.broker.listener.name=BROKER
     controller.listener.names=CONTROLLER
     listener.security.protocol.map=PLAINTEXT:PLAINTEXT,EXTERNAL_SASL:SASL_PLAINTEXT,INTERNAL_SASL:SASL_PLAINTEXT,BROKER:SASL_PLAINTEXT,CONTROLLER:SASL_PLAINTEXT

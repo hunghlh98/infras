@@ -125,7 +125,10 @@ class KafkaService(InfrastructureService):
             "bash", "-c",
             f"echo '{client_props}' > /tmp/acls.props && " +
             "/usr/bin/kafka-acls " +
-            "--bootstrap-server localhost:9095 " +
+            # In-pod admin path: use the INTERNAL_SASL listener (advertises localhost),
+            # NOT 9095/EXTERNAL_SASL which advertises the ClusterIP and would bounce the
+            # admin client out of the pod and back.
+            "--bootstrap-server localhost:29095 " +
             "--command-config /tmp/acls.props " +
             "--list " +
             f"--principal User:{service_name}"
@@ -150,7 +153,7 @@ class KafkaService(InfrastructureService):
                 "bash", "-c",
                 f"echo '{client_props}' > /tmp/acls.props && " +
                 "/usr/bin/kafka-acls " +
-                "--bootstrap-server localhost:9095 " +
+                "--bootstrap-server localhost:29095 " +
                 "--command-config /tmp/acls.props " +
                 "--add " +
                 f"--allow-principal User:{service_name} " +
@@ -173,7 +176,7 @@ class KafkaService(InfrastructureService):
                 "bash", "-c",
                 f"echo '{client_props}' > /tmp/acls.props && " +
                 "/usr/bin/kafka-acls " +
-                "--bootstrap-server localhost:9095 " +
+                "--bootstrap-server localhost:29095 " +
                 "--command-config /tmp/acls.props " +
                 "--add " +
                 f"--allow-principal User:{service_name} " +
@@ -224,7 +227,7 @@ class KafkaService(InfrastructureService):
                 "bash", "-c",
                 f"echo '{client_props}' > /tmp/acls.props && " +
                 "/usr/bin/kafka-acls " +
-                "--bootstrap-server localhost:9095 " +
+                "--bootstrap-server localhost:29095 " +
                 "--command-config /tmp/acls.props " +
                 "--list " +
                 f"--principal User:{service_name}"
