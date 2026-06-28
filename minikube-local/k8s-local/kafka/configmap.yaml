@@ -20,7 +20,11 @@ data:
     # External ports (cluster access): 9092-9094 PLAINTEXT, 9095-9097 SASL
     # Internal ports (pod internal): 290xx series for easy identification
     listeners=PLAINTEXT://0.0.0.0:9092,EXTERNAL_SASL://0.0.0.0:9095,INTERNAL_SASL://0.0.0.0:29095,BROKER://0.0.0.0:29091,CONTROLLER://0.0.0.0:29093
-    advertised.listeners=PLAINTEXT://kafka-0.infras-kafka.svc.cluster.local:9092,EXTERNAL_SASL://localhost:9095,BROKER://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:29091
+    # advertised.listeners: ONE address per listener; Kafka redirects clients here AFTER bootstrap.
+    #   EXTERNAL_SASL:9095  -> pod DNS, for IN-CLUSTER SASL clients (resolves via kafka-headless Service)
+    #   INTERNAL_SASL:29095 -> localhost, for HOST access via `kubectl port-forward kafka-0 29095:29095`
+    #   Never set EXTERNAL_SASL back to localhost: in-cluster clients would reconnect to themselves and fail.
+    advertised.listeners=PLAINTEXT://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:9092,EXTERNAL_SASL://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:9095,INTERNAL_SASL://localhost:29095,BROKER://kafka-0.kafka-headless.infras-kafka.svc.cluster.local:29091
     inter.broker.listener.name=BROKER
     controller.listener.names=CONTROLLER
     listener.security.protocol.map=PLAINTEXT:PLAINTEXT,EXTERNAL_SASL:SASL_PLAINTEXT,INTERNAL_SASL:SASL_PLAINTEXT,BROKER:SASL_PLAINTEXT,CONTROLLER:SASL_PLAINTEXT
