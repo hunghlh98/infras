@@ -75,14 +75,20 @@ else
     echo "  ✓ Credentials stored in Vault at infras/kafka/sasl"
 fi
 
-# Generate broker password
-BROKER_PASSWORD=$(cat /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 20)
-
-# Create JAAS Secret with Vault credentials
+# Create JAAS Secret with Vault credentials.
+# IMPORTANT: preserve an existing Secret. Re-running deploy must NOT wipe per-service
+# users that `setup-acl` appended later (e.g. user_super_app), nor rotate the broker
+# password. So we only create the Secret on first run; otherwise we leave it (and the
+# matching Vault infras/kafka/broker entry) untouched.
 echo ""
-echo "→ Creating JAAS Secret..."
-kubectl create secret generic kafka-jaas-config \
-    --from-literal=kafka_server_jaas.conf="KafkaServer {
+if kubectl get secret kafka-jaas-config -n infras-kafka &>/dev/null; then
+    echo "→ JAAS Secret already exists — preserving it (keeps setup-acl users + broker password)."
+    echo "  ✓ Existing JAAS Secret kept; Vault infras/kafka/broker left as-is"
+else
+    echo "→ Creating JAAS Secret (first run)..."
+    BROKER_PASSWORD=$(cat /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 20)
+    kubectl create secret generic kafka-jaas-config \
+        --from-literal=kafka_server_jaas.conf="KafkaServer {
   org.apache.kafka.common.security.plain.PlainLoginModule required
   username=\"kafka-1\"
   password=\"${BROKER_PASSWORD}\"
@@ -90,14 +96,13 @@ kubectl create secret generic kafka-jaas-config \
   user_kafka-1=\"${BROKER_PASSWORD}\"
 ;
 };" \
-    -n infras-kafka --dry-run=client -o yaml | kubectl apply -f -
-echo "  ✓ JAAS Secret created"
+        -n infras-kafka --dry-run=client -o yaml | kubectl apply -f -
+    echo "  ✓ JAAS Secret created"
 
-# Store broker password in Vault for reference
-echo ""
-echo "→ Storing broker credentials in Vault..."
-kubectl exec -n infras-vault "$VAULT_POD" -- vault kv put infras/kafka/broker username="kafka-1" password="$BROKER_PASSWORD" > /dev/null 2>&1
-echo "  ✓ Broker credentials stored in Vault at infras/kafka/broker"
+    echo "→ Storing broker credentials in Vault..."
+    kubectl exec -n infras-vault "$VAULT_POD" -- vault kv put infras/kafka/broker username="kafka-1" password="$BROKER_PASSWORD" > /dev/null 2>&1
+    echo "  ✓ Broker credentials stored in Vault at infras/kafka/broker"
+fi
 
 # Deploy resources
 echo ""
