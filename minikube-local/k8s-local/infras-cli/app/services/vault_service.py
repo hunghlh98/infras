@@ -53,10 +53,14 @@ class VaultService:
 
     async def check_connection(self) -> bool:
         """
-        Check if Vault is accessible.
+        Check if Vault is reachable (unauthenticated health ping).
+
+        Note: this succeeds even when the configured token is invalid, because
+        Vault's health endpoint does not require authentication. Use
+        check_token_valid() to verify the token itself.
 
         Returns:
-            True if Vault is accessible, False otherwise
+            True if Vault is reachable, False otherwise
         """
         try:
             self.client.sys.read_health_status()
@@ -64,6 +68,26 @@ class VaultService:
             return True
         except Exception as e:
             logger.warning("Vault connection check failed", error=str(e))
+            return False
+
+    async def check_token_valid(self) -> bool:
+        """
+        Check if the configured Vault token actually authenticates.
+
+        Performs a token lookup-self; returns False if the token is missing,
+        expired, revoked, or otherwise invalid (i.e. credentials are stale).
+
+        Returns:
+            True if the token is valid, False otherwise
+        """
+        try:
+            if not self.vault_token:
+                return False
+            self.client.auth.token.lookup_self()
+            logger.debug("Vault token validity check successful")
+            return True
+        except Exception as e:
+            logger.warning("Vault token validity check failed", error=str(e))
             return False
 
     # ============================================================================
@@ -106,6 +130,30 @@ class VaultService:
         except Exception as e:
             logger.error("Failed to fetch secret", path=path, field=field, error=str(e))
             raise
+
+    async def list_secrets(self, path: str) -> list:
+        """
+        List secret keys under a KV v2 path.
+
+        Args:
+            path: Path to list (e.g., "infras/postgres" or "apps")
+
+        Returns:
+            List of key names (trailing slashes stripped). Returns [] if the
+            path has no entries or does not exist.
+        """
+        mount_point, secret_path = self._detect_mount(path)
+        try:
+            resp = self.client.secrets.kv.v2.list_secrets(
+                path=secret_path,
+                mount_point=mount_point
+            )
+            keys = resp.get("data", {}).get("keys", [])
+            return [k.rstrip("/") for k in keys]
+        except Exception as e:
+            # InvalidPath (no entries) is normal — return empty rather than error
+            logger.debug("List secrets returned nothing", path=path, error=str(e))
+            return []
 
     async def store_credential(
         self,
@@ -435,6 +483,32 @@ path "apps/data/{app_name}/*" {{
             return True
         except Exception:
             return False
+
+    async def list_users(self) -> list:
+        """
+        List userpass users with their attached policies.
+
+        Returns:
+            List of {"username": str, "policies": [str]}. Returns [] if the
+            userpass auth method is absent or has no users.
+        """
+        try:
+            resp = self.client.auth.userpass.list_user()
+            usernames = resp.get("data", {}).get("keys", [])
+        except Exception as e:
+            logger.debug("List users returned nothing", error=str(e))
+            return []
+
+        out = []
+        for u in usernames:
+            policies = []
+            try:
+                info = self.client.auth.userpass.read_user(username=u)["data"]
+                policies = info.get("token_policies") or info.get("policies") or []
+            except Exception:
+                pass
+            out.append({"username": u, "policies": policies})
+        return out
 
     async def assign_policies_to_user(
         self,

@@ -104,39 +104,37 @@ class PostgreSQLService(InfrastructureService):
         """
         logger.info("Verifying PostgreSQL ACL", service_name=service_name)
 
-        try:
-            admin_pass = await self.vault.fetch_secret("infras/postgres/auth", "password")
+        # Errors here (Vault/exec failures) propagate to the caller so they are
+        # reported as "could not verify" rather than a misleading "not found".
+        admin_pass = await self.vault.fetch_secret("infras/postgres/auth", "password")
 
-            # Helper function to run psql with password
-            async def psql_query(sql: str) -> str:
-                """Execute psql query with authentication (returns unformatted output)."""
-                return await self.k8s.exec_command(
-                    namespace="infras-postgres",
-                    pod="deployment/postgres",
-                    container="postgres",
-                    command=["bash", "-c", f"PGPASSWORD='{admin_pass}' psql -U postgres -tAc \"{sql}\""]
-                )
+        # Helper function to run psql with password
+        async def psql_query(sql: str) -> str:
+            """Execute psql query with authentication (returns unformatted output)."""
+            return await self.k8s.exec_command(
+                namespace="infras-postgres",
+                pod="deployment/postgres",
+                container="postgres",
+                command=["bash", "-c", f"PGPASSWORD='{admin_pass}' psql -U postgres -tAc \"{sql}\""]
+            )
 
-            # Check if user exists
-            user_check = await psql_query(f"SELECT 1 FROM pg_roles WHERE rolname='{service_name}';")
+        # Check if user exists
+        user_check = await psql_query(f"SELECT 1 FROM pg_roles WHERE rolname='{service_name}';")
 
-            # Check if database exists
-            db_check = await psql_query(f"SELECT 1 FROM pg_database WHERE datname='{service_name}';")
+        # Check if database exists
+        db_check = await psql_query(f"SELECT 1 FROM pg_database WHERE datname='{service_name}';")
 
-            user_exists = bool(user_check.strip())
-            db_exists = bool(db_check.strip())
+        user_exists = bool(user_check.strip())
+        db_exists = bool(db_check.strip())
 
-            if user_exists and db_exists:
-                logger.info("PostgreSQL ACL verified", service_name=service_name)
-                return True
-            else:
-                logger.warning("PostgreSQL ACL verification failed", service_name=service_name,
-                               user_exists=user_exists, db_exists=db_exists)
-                return False
+        if user_exists and db_exists:
+            logger.info("PostgreSQL ACL verified", service_name=service_name)
+            return True
 
-        except Exception as e:
-            logger.error("PostgreSQL ACL verification error", service_name=service_name, error=str(e))
-            return False
+        # Queries ran but role/database is absent -> genuinely not found.
+        logger.warning("PostgreSQL ACL not found", service_name=service_name,
+                       user_exists=user_exists, db_exists=db_exists)
+        return False
 
     def get_vault_path(self, service_name: str) -> str:
         """

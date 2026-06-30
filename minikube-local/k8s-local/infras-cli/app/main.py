@@ -9,7 +9,7 @@ _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.openapi.utils import get_openapi
 from app.api.routes import api_router
 from app.config import settings
@@ -65,6 +65,17 @@ elif settings.metrics_enabled and not PROMETHEUS_AVAILABLE:
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
+
+# Mount the operator UI (served same-origin so no CORS is needed).
+# Files live in app/ui/ and are already bundled into the image via `COPY app/`.
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_ui_dir = Path(__file__).resolve().parent / "ui"
+if _ui_dir.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_ui_dir), html=True), name="ui")
+    logger.info("Operator UI mounted", path="/ui", directory=str(_ui_dir))
+else:
+    logger.warning("Operator UI directory not found, /ui disabled", directory=str(_ui_dir))
 
 
 # ============================================================================
@@ -132,13 +143,17 @@ async def shutdown_event():
 # Root Endpoints
 # ============================================================================
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint with API information."""
+    """Serve the operator UI at the root path (falls back to API info)."""
+    index = Path(__file__).resolve().parent / "ui" / "index.html"
+    if index.is_file():
+        return FileResponse(str(index))
     return {
         "name": "Infras-CLI API",
         "version": "1.0.0",
         "description": "Infrastructure ACL Management API",
+        "ui": "/ui",
         "docs": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json"

@@ -80,37 +80,36 @@ class MySQLService(InfrastructureService):
         """
         logger.info("Verifying MySQL ACL", service_name=service_name)
 
-        try:
-            # Check if database exists
-            db_check = await self.k8s.exec_command(
-                namespace="infras-mysql",
-                pod="deployment/mysql",
-                command=["mysql", "-u", "root", "-p" + await self.vault.fetch_secret("infras/mysql/root", "password"),
-                       "-e", f"SHOW DATABASES LIKE '{service_name}';"]
-            )
+        # Errors here (Vault/exec failures) propagate so they are reported as
+        # "could not verify" rather than a misleading "not found".
+        root_pass = await self.vault.fetch_secret("infras/mysql/root", "password")
 
-            # Check if user exists
-            user_check = await self.k8s.exec_command(
-                namespace="infras-mysql",
-                pod="deployment/mysql",
-                command=["mysql", "-u", "root", "-p" + await self.vault.fetch_secret("infras/mysql/root", "password"),
-                       "-e", f"SELECT User FROM mysql.user WHERE User='{service_name}';"]
-            )
+        # Check if database exists
+        db_check = await self.k8s.exec_command(
+            namespace="infras-mysql",
+            pod="deployment/mysql",
+            command=["mysql", "-u", "root", "-p" + root_pass,
+                   "-e", f"SHOW DATABASES LIKE '{service_name}';"]
+        )
 
-            db_exists = service_name in db_check
-            user_exists = service_name in user_check
+        # Check if user exists
+        user_check = await self.k8s.exec_command(
+            namespace="infras-mysql",
+            pod="deployment/mysql",
+            command=["mysql", "-u", "root", "-p" + root_pass,
+                   "-e", f"SELECT User FROM mysql.user WHERE User='{service_name}';"]
+        )
 
-            if db_exists and user_exists:
-                logger.info("MySQL ACL verified", service_name=service_name)
-                return True
-            else:
-                logger.warning("MySQL ACL verification failed", service_name=service_name,
-                              db_exists=db_exists, user_exists=user_exists)
-                return False
+        db_exists = service_name in db_check
+        user_exists = service_name in user_check
 
-        except Exception as e:
-            logger.error("MySQL ACL verification error", service_name=service_name, error=str(e))
-            return False
+        if db_exists and user_exists:
+            logger.info("MySQL ACL verified", service_name=service_name)
+            return True
+
+        logger.warning("MySQL ACL not found", service_name=service_name,
+                       db_exists=db_exists, user_exists=user_exists)
+        return False
 
     def get_vault_path(self, service_name: str) -> str:
         """

@@ -37,6 +37,26 @@ class KubernetesOperations:
             logger.warning("Kubernetes connection check failed", error=str(e))
             return False
 
+    async def namespace_has_pods(self, namespace: str) -> bool:
+        """
+        Check whether a namespace currently has at least one pod.
+
+        Used to report whether an infra service is actually deployed.
+
+        Args:
+            namespace: Kubernetes namespace
+
+        Returns:
+            True if the namespace has one or more pods, False otherwise
+            (including when the namespace does not exist).
+        """
+        try:
+            pods = self.core_v1.list_namespaced_pod(namespace=namespace, limit=1)
+            return len(pods.items) > 0
+        except Exception as e:
+            logger.debug("namespace_has_pods check failed", namespace=namespace, error=str(e))
+            return False
+
     async def exec_command(
         self,
         namespace: str,

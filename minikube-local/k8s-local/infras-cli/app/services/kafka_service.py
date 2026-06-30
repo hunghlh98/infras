@@ -215,43 +215,42 @@ class KafkaService(InfrastructureService):
         """
         logger.info("Verifying Kafka ACL", service_name=service_name)
 
-        try:
-            admin_user = await self.vault.fetch_secret("infras/kafka/sasl", "username")
-            admin_pass = await self.vault.fetch_secret("infras/kafka/sasl", "password")
+        # Errors here (Vault/exec failures) propagate so they are reported as
+        # "could not verify" rather than a misleading "not found".
+        admin_user = await self.vault.fetch_secret("infras/kafka/sasl", "username")
+        admin_pass = await self.vault.fetch_secret("infras/kafka/sasl", "password")
 
-            # Create client properties for SASL auth
-            client_props = f"sasl.mechanism=PLAIN\nsecurity.protocol=SASL_PLAINTEXT\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{admin_user}\" password=\"{admin_pass}\";"
+        # Create client properties for SASL auth
+        client_props = f"sasl.mechanism=PLAIN\nsecurity.protocol=SASL_PLAINTEXT\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{admin_user}\" password=\"{admin_pass}\";"
 
-            # List ACLs for this user
-            acl_list_cmd = [
-                "bash", "-c",
-                f"echo '{client_props}' > /tmp/acls.props && " +
-                "/usr/bin/kafka-acls " +
-                "--bootstrap-server localhost:29095 " +
-                "--command-config /tmp/acls.props " +
-                "--list " +
-                f"--principal User:{service_name}"
-            ]
+        # List ACLs for this user
+        acl_list_cmd = [
+            "bash", "-c",
+            f"echo '{client_props}' > /tmp/acls.props && " +
+            "/usr/bin/kafka-acls " +
+            "--bootstrap-server localhost:29095 " +
+            "--command-config /tmp/acls.props " +
+            "--list " +
+            f"--principal User:{service_name}"
+        ]
 
-            acl_list = await self.k8s.exec_command(
-                namespace="infras-kafka",
-                pod="statefulset/kafka",
-                command=acl_list_cmd
-            )
+        acl_list = await self.k8s.exec_command(
+            namespace="infras-kafka",
+            pod="statefulset/kafka",
+            command=acl_list_cmd
+        )
 
-            # Check if any ACLs exist for this user
-            acl_exists = service_name in acl_list or "No ACLs found" not in acl_list
+        # ACLs exist for this principal only if the listing actually references
+        # the user. (The previous `"No ACLs found" not in acl_list` check was
+        # buggy: it reported success whenever that exact phrase was absent.)
+        acl_exists = f"User:{service_name}" in acl_list
 
-            if acl_exists:
-                logger.info("Kafka ACL verified", service_name=service_name)
-                return True
-            else:
-                logger.warning("Kafka ACL verification failed", service_name=service_name)
-                return False
+        if acl_exists:
+            logger.info("Kafka ACL verified", service_name=service_name)
+            return True
 
-        except Exception as e:
-            logger.error("Kafka ACL verification error", service_name=service_name, error=str(e))
-            return False
+        logger.warning("Kafka ACL not found", service_name=service_name)
+        return False
 
     def get_vault_path(self, service_name: str) -> str:
         """

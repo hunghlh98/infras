@@ -6,8 +6,9 @@ metadata:
   labels:
     app: infras-cli
   annotations:
-    # Use NGINX ingress class
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    # NOTE: do NOT set `rewrite-target: /` here. With a `/` prefix and no capture
+    # group it rewrites every request path to `/`, which breaks both the API
+    # (/api/v1/...) and the UI (/ui/...). We forward paths unchanged instead.
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: nginx
@@ -15,6 +16,23 @@ spec:
     - host: infras-cli.local
       http:
         paths:
+          # API endpoints
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: infras-cli
+                port:
+                  number: 8000
+          # Operator UI (served by the same FastAPI app)
+          - path: /ui
+            pathType: Prefix
+            backend:
+              service:
+                name: infras-cli
+                port:
+                  number: 8000
+          # Root, docs, openapi, metrics
           - path: /
             pathType: Prefix
             backend:

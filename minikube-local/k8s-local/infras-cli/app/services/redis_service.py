@@ -91,29 +91,26 @@ class RedisService(InfrastructureService):
         """
         logger.info("Verifying Redis ACL", service_name=service_name)
 
-        try:
-            admin_pass = await self.vault.fetch_secret("infras/redis/auth", "password")
+        # Errors here (Vault/exec failures) propagate so they are reported as
+        # "could not verify" rather than a misleading "not found".
+        admin_pass = await self.vault.fetch_secret("infras/redis/auth", "password")
 
-            # List ACL users
-            acl_list = await self.k8s.exec_command(
-                namespace="infras-redis",
-                pod="statefulset/redis",
-                command=["redis-cli", "-a", admin_pass, "ACL", "LIST"]
-            )
+        # List ACL users
+        acl_list = await self.k8s.exec_command(
+            namespace="infras-redis",
+            pod="statefulset/redis",
+            command=["redis-cli", "-a", admin_pass, "ACL", "LIST"]
+        )
 
-            # Check if user exists in ACL list
-            user_exists = f"user {service_name} on" in acl_list
+        # Check if user exists in ACL list
+        user_exists = f"user {service_name} on" in acl_list
 
-            if user_exists:
-                logger.info("Redis ACL verified", service_name=service_name)
-                return True
-            else:
-                logger.warning("Redis ACL verification failed", service_name=service_name)
-                return False
+        if user_exists:
+            logger.info("Redis ACL verified", service_name=service_name)
+            return True
 
-        except Exception as e:
-            logger.error("Redis ACL verification error", service_name=service_name, error=str(e))
-            return False
+        logger.warning("Redis ACL not found", service_name=service_name)
+        return False
 
     def get_vault_path(self, service_name: str) -> str:
         """

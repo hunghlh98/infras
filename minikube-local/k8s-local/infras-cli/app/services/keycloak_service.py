@@ -186,60 +186,55 @@ class KeycloakService(InfrastructureService):
             True if realm and client exist, False otherwise
         """
         if not owner_username:
-            logger.error("owner_username required for verification")
-            return False
+            raise ValueError("owner_username (realm) is required for Keycloak verification")
 
         logger.info("Verifying Keycloak ACL", service_name=service_name, realm=owner_username)
 
-        try:
-            admin_pass = await self.vault.fetch_secret("infras/keycloak/auth", "password")
-            keycloak_url = "http://keycloak.infras-keycloak.svc.cluster.local:8080"
+        # Errors here (Vault/Keycloak API failures) propagate so they are
+        # reported as "could not verify" rather than a misleading "not found".
+        admin_pass = await self.vault.fetch_secret("infras/keycloak/auth", "password")
+        keycloak_url = "http://keycloak.infras-keycloak.svc.cluster.local:8080"
 
-            # Get admin token
-            token_response = requests.post(
-                f"{keycloak_url}/realms/master/protocol/openid-connect/token",
-                data={
-                    "grant_type": "password",
-                    "client_id": "admin-cli",
-                    "username": await self.vault.fetch_secret("infras/keycloak/auth", "username"),
-                    "password": admin_pass
-                }
-            )
-            token_response.raise_for_status()
-            token = token_response.json()["access_token"]
-            headers = {"Authorization": f"Bearer {token}"}
+        # Get admin token
+        token_response = requests.post(
+            f"{keycloak_url}/realms/master/protocol/openid-connect/token",
+            data={
+                "grant_type": "password",
+                "client_id": "admin-cli",
+                "username": await self.vault.fetch_secret("infras/keycloak/auth", "username"),
+                "password": admin_pass
+            }
+        )
+        token_response.raise_for_status()
+        token = token_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
 
-            # Check if realm exists
-            realm_response = requests.get(
-                f"{keycloak_url}/admin/realms/{owner_username}",
-                headers=headers
-            )
+        # Check if realm exists
+        realm_response = requests.get(
+            f"{keycloak_url}/admin/realms/{owner_username}",
+            headers=headers
+        )
 
-            if realm_response.status_code != 200:
-                logger.warning("Keycloak realm not found", realm=owner_username)
-                return False
-
-            # Check if client exists
-            clients_response = requests.get(
-                f"{keycloak_url}/admin/realms/{owner_username}/clients",
-                params={"clientId": service_name},
-                headers=headers
-            )
-            clients_response.raise_for_status()
-            clients = clients_response.json()
-
-            if clients:
-                logger.info("Keycloak ACL verified", service_name=service_name, realm=owner_username)
-                return True
-            else:
-                logger.warning("Keycloak client not found", service_name=service_name)
-                return False
-
-        except Exception as e:
-            logger.error("Keycloak ACL verification error",
-                        service_name=service_name,
-                        error=str(e))
+        if realm_response.status_code == 404:
+            logger.warning("Keycloak realm not found", realm=owner_username)
             return False
+        realm_response.raise_for_status()
+
+        # Check if client exists
+        clients_response = requests.get(
+            f"{keycloak_url}/admin/realms/{owner_username}/clients",
+            params={"clientId": service_name},
+            headers=headers
+        )
+        clients_response.raise_for_status()
+        clients = clients_response.json()
+
+        if clients:
+            logger.info("Keycloak ACL verified", service_name=service_name, realm=owner_username)
+            return True
+
+        logger.warning("Keycloak client not found", service_name=service_name)
+        return False
 
     def get_vault_path(self, service_name: str, owner_username: str = None) -> str:
         """

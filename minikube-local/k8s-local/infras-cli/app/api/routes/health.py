@@ -34,17 +34,28 @@ async def readiness():
     """
     try:
         # Initialize services to check connectivity
-        vault = VaultService()
         k8s = KubernetesOperations()
-
-        # Check connections (these are lightweight operations)
-        vault_ok = await vault.check_connection()
         k8s_ok = await k8s.check_connection()
 
-        overall_status = "healthy" if vault_ok and k8s_ok else "unhealthy"
+        # Vault: distinguish "reachable" from "token actually valid".
+        # VaultService() raises if no token is configured; treat that as a
+        # stale/invalid-credentials condition rather than a hard failure so the
+        # UI can surface a helpful message.
+        vault_ok = False
+        token_valid = False
+        try:
+            vault = VaultService()
+            vault_ok = await vault.check_connection()
+            token_valid = await vault.check_token_valid() if vault_ok else False
+        except Exception as ve:
+            logger.warning("Readiness check: Vault unavailable", error=str(ve))
+
+        overall_status = "healthy" if (vault_ok and token_valid and k8s_ok) else "unhealthy"
 
         if not vault_ok:
             logger.warning("Readiness check: Vault not connected")
+        elif not token_valid:
+            logger.warning("Readiness check: Vault token invalid/stale")
 
         if not k8s_ok:
             logger.warning("Readiness check: Kubernetes not connected")
@@ -52,6 +63,7 @@ async def readiness():
         return HealthResponse(
             status=overall_status,
             vault_connected=vault_ok,
+            vault_token_valid=token_valid,
             kubernetes_connected=k8s_ok
         )
 
@@ -60,5 +72,6 @@ async def readiness():
         return HealthResponse(
             status="unhealthy",
             vault_connected=False,
+            vault_token_valid=False,
             kubernetes_connected=False
         )

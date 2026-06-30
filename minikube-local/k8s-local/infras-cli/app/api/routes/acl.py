@@ -11,6 +11,53 @@ import structlog
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
+# Canonical infra types (deduped; matches ServiceFactory minus aliases).
+SUPPORTED_INFRA_TYPES = ["postgres", "redis", "kafka", "mysql", "keycloak"]
+# Admin/credential keys stored under infras/<type>/ that are NOT apps.
+RESERVED_INFRA_KEYS = {"auth", "root", "sasl"}
+
+
+@router.get("/infras")
+async def list_infras():
+    """
+    List supported infra types with deployment status and provisioned apps.
+
+    For each infra type returns whether it is deployed (has pods in
+    `infras-<type>`) and the apps that have an ACL provisioned on it.
+    """
+    vault = VaultService()
+    k8s = KubernetesOperations()
+    out = []
+    for t in SUPPORTED_INFRA_TYPES:
+        apps = [a for a in await vault.list_secrets(f"infras/{t}") if a not in RESERVED_INFRA_KEYS]
+        deployed = await k8s.namespace_has_pods(f"infras-{t}")
+        out.append({
+            "type": t,
+            "deployed": deployed,
+            "app_count": len(apps),
+            "apps": sorted(apps),
+        })
+    return {"infras": out}
+
+
+@router.get("/apps")
+async def list_apps():
+    """
+    List provisioned apps and which infra types each has an ACL on.
+
+    Built by aggregating the keys under `infras/<type>/` across all infra
+    types (excluding reserved admin-credential keys).
+    """
+    vault = VaultService()
+    agg = {}
+    for t in SUPPORTED_INFRA_TYPES:
+        for a in await vault.list_secrets(f"infras/{t}"):
+            if a in RESERVED_INFRA_KEYS:
+                continue
+            agg.setdefault(a, []).append(t)
+    apps = [{"name": k, "infras": sorted(v)} for k, v in sorted(agg.items())]
+    return {"apps": apps, "count": len(apps)}
+
 
 @router.post("/setup", response_model=ACLSetupResponse, status_code=status.HTTP_201_CREATED)
 async def setup_acl(request: ACLSetupRequest):
@@ -135,25 +182,31 @@ async def verify_acl(request: ACLVerifyRequest):
         if request.infra_type.lower() == "keycloak" and request.owner_username:
             kwargs["owner_username"] = request.owner_username
 
-        # Verify ACL
+        # Verify ACL. A True/False result means the check actually ran and the
+        # resource was found / not found. Any exception means the check itself
+        # could not be performed (Vault unreachable, exec denied, pod missing,
+        # etc.) and must NOT be reported as "not found".
         acl_exists = await service.verify_acl(request.service_name, **kwargs)
-
-        message = "ACL verified" if acl_exists else "ACL not found"
 
         return ACLVerifyResponse(
             success=acl_exists,
-            message=message
+            message="ACL verified" if acl_exists else "ACL not found"
         )
 
     except ValueError as e:
+        # Bad input (unsupported infra type, missing required arg)
         logger.error("Invalid parameters for ACL verification", error=str(e))
-        return ACLVerifyResponse(
-            success=False,
-            message=f"Invalid parameters: {str(e)}"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid parameters: {str(e)}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("ACL verification failed", error=str(e))
-        return ACLVerifyResponse(
-            success=False,
-            message=f"Verification failed: {str(e)}"
+        # The verification could not be completed -> surface as an error, not
+        # as a (misleading) "ACL not found".
+        logger.error("ACL verification could not be completed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not verify '{request.service_name}' on {request.infra_type}: {str(e)}"
         )

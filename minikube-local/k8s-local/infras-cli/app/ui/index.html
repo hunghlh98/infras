@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Infras-CLI Console</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-2: #11161d;
+      --panel: #161b22;
+      --panel-2: #1c232c;
+      --border: #2a313c;
+      --border-2: #353d49;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2dd4bf;
+      --accent-d: #14b8a6;
+      --blue: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --amber: #d29922;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--blue); }
+    code, .mono { font-family: var(--mono); }
+
+    /* ---------- Login ---------- */
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background:
+        radial-gradient(1200px 600px at 50% -10%, rgba(45,212,191,0.08), transparent 60%),
+        var(--bg);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 32px 28px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .brand .logo {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--blue));
+      display: grid; place-items: center; color: #06231f; font-weight: 800;
+      font-family: var(--mono); font-size: 16px;
+    }
+    .brand h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+    .login-sub { color: var(--muted); font-size: 13px; margin: 4px 0 22px; }
+
+    .banner { display: none; align-items: flex-start; gap: 9px; border-radius: 9px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; margin-bottom: 18px; }
+    .banner.show { display: flex; }
+    .banner .ic { flex-shrink: 0; }
+    .banner.warn { background: rgba(210,153,34,.12); border: 1px solid rgba(210,153,34,.35); color: #e3b341; }
+    .banner.err { background: rgba(248,81,73,.12); border: 1px solid rgba(248,81,73,.35); color: #ff7b72; }
+
+    label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+    .field { margin-bottom: 16px; }
+    input, select {
+      width: 100%;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 9px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus { border-color: var(--accent-d); box-shadow: 0 0 0 3px rgba(45,212,191,0.15); }
+    select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; }
+
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 9px;
+      font-weight: 600;
+      transition: filter .15s, background .15s, border-color .15s;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-d));
+      color: #06231f;
+      padding: 11px 14px;
+      font-size: 14px;
+    }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.07); }
+
+    /* ---------- App shell ---------- */
+    .hidden { display: none !important; }
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; gap: 16px;
+      padding: 10px 20px;
+      background: rgba(13,17,23,0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar .brand h1 { font-size: 15px; }
+    .topbar .spacer { flex: 1; }
+    .health-pill {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 999px; padding: 6px 14px; font-size: 12px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,.6); }
+    .dot.bad { background: var(--red); box-shadow: 0 0 8px rgba(248,81,73,.6); }
+    .dot.warn { background: var(--amber); box-shadow: 0 0 8px rgba(210,153,34,.6); }
+    .dep { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+    .user-chip { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+    .user-chip .av { width: 28px; height: 28px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border-2); display: grid; place-items: center; font-family: var(--mono); font-size: 12px; color: var(--accent); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border-2); color: var(--muted); padding: 6px 12px; font-size: 12px; }
+    .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+    .layout { display: flex; max-width: 1100px; margin: 0 auto; padding: 22px 20px 60px; gap: 22px; }
+    .nav { width: 188px; flex-shrink: 0; position: sticky; top: 70px; align-self: flex-start; display: flex; flex-direction: column; gap: 4px; }
+    .nav button {
+      text-align: left; background: transparent; color: var(--muted);
+      padding: 10px 12px; font-size: 13px; border-radius: 8px;
+      display: flex; align-items: center; gap: 10px; font-weight: 500;
+    }
+    .nav button .ic { font-size: 15px; width: 18px; text-align: center; }
+    .nav button:hover { background: var(--panel); color: var(--text); }
+    .nav button.active { background: var(--panel-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+    .content { flex: 1; min-width: 0; }
+
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-bottom: 20px; }
+    .panel h2 { margin: 0 0 4px; font-size: 16px; }
+    .panel .desc { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .row-actions { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+    .btn-inline { background: linear-gradient(135deg, var(--accent), var(--accent-d)); color: #06231f; padding: 10px 18px; font-size: 13px; }
+    .btn-inline.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-2); }
+    .btn-inline:hover:not(:disabled) { filter: brightness(1.07); }
+
+    .hint { font-size: 12px; color: var(--muted); margin-top: -6px; margin-bottom: 12px; }
+
+    /* ---------- Result cards ---------- */
+    .result { margin-top: 18px; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+    .result-head { padding: 10px 14px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .result.ok .result-head { background: rgba(63,185,80,.12); color: var(--green); border-bottom: 1px solid rgba(63,185,80,.25); }
+    .result.bad .result-head { background: rgba(248,81,73,.12); color: var(--red); border-bottom: 1px solid rgba(248,81,73,.25); }
+    .result-body { padding: 14px; background: var(--bg-2); }
+    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 8px 14px; font-size: 13px; }
+    .kv dt { color: var(--muted); font-family: var(--mono); }
+    .kv dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+
+    .secret {
+      display: flex; align-items: center; gap: 8px; margin-top: 12px;
+      background: #0a0e13; border: 1px dashed var(--border-2); border-radius: 8px; padding: 10px 12px;
+    }
+    .secret .val { flex: 1; font-family: var(--mono); font-size: 13px; word-break: break-all; color: var(--amber); }
+    .secret .val.blur { filter: blur(5px); user-select: none; }
+    .mini { background: var(--panel-2); border: 1px solid var(--border-2); color: var(--muted); padding: 5px 9px; font-size: 11px; }
+    .mini:hover { color: var(--text); }
+    .warn { font-size: 12px; color: var(--amber); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 9px; font-size: 12px; font-family: var(--mono); color: var(--blue); }
+
+    /* tables */
+    .tbl-wrap { overflow-x: auto; }
+    .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .tbl th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .tbl td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .tbl tr:last-child td { border-bottom: none; }
+    .tbl tbody tr:hover td { background: var(--bg-2); }
+    .pill-yes { color: var(--green); font-size: 12px; }
+    .pill-no { color: var(--muted); font-size: 12px; }
+    .muted { color: var(--muted); }
+    .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+    .panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+
+    /* searchable combobox */
+    .combo { position: relative; }
+    .combo-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 9px; max-height: 240px; overflow-y: auto; z-index: 30; box-shadow: 0 12px 30px rgba(0,0,0,.5); display: none; }
+    .combo-menu.show { display: block; }
+    .combo-item { padding: 9px 12px; cursor: pointer; font-size: 13px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .combo-item:hover, .combo-item.active { background: var(--panel); }
+    .combo-item .meta { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+    .combo-empty { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+
+    /* ---------- Toast ---------- */
+    .toasts { position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 10px; z-index: 100; }
+    .toast {
+      background: var(--panel); border: 1px solid var(--border-2); border-radius: 10px;
+      padding: 11px 15px; font-size: 13px; min-width: 220px; max-width: 360px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.5); animation: slideIn .2s ease;
+      display: flex; align-items: center; gap: 9px;
+    }
+    .toast.ok { border-left: 3px solid var(--green); }
+    .toast.err { border-left: 3px solid var(--red); }
+    .toast.info { border-left: 3px solid var(--blue); }
+    @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    .spin { width: 14px; height: 14px; border: 2px solid rgba(6,35,31,.4); border-top-color: #06231f; border-radius: 50%; display: inline-block; animation: rot .6s linear infinite; vertical-align: -2px; }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    @media (max-width: 760px) {
+      .layout { flex-direction: column; }
+      .nav { width: 100%; flex-direction: row; overflow-x: auto; position: static; }
+      .nav button { white-space: nowrap; }
+      .grid2 { grid-template-columns: 1fr; }
+      .kv { grid-template-columns: 1fr; gap: 2px 0; }
+      .kv dt { margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============ LOGIN ============ -->
+  <div id="login" class="login-wrap">
+    <form class="login-card" id="login-form">
+      <div class="brand"><div class="logo">IC</div><h1>Infras-CLI Console</h1></div>
+      <p class="login-sub">Sign in with your Vault credentials</p>
+      <div class="banner" id="login-banner"><span class="ic">⚠</span><span id="login-banner-text"></span></div>
+      <div class="field">
+        <label for="lg-user">Username</label>
+        <input id="lg-user" autocomplete="username" placeholder="e.g. chown" required />
+      </div>
+      <div class="field">
+        <label for="lg-pass">Password</label>
+        <input id="lg-pass" type="password" autocomplete="current-password" placeholder="••••••••" required />
+      </div>
+      <button class="btn-primary" id="lg-btn" type="submit">Sign in</button>
+      <p class="login-sub" style="margin:16px 0 0;text-align:center;font-size:12px;">
+        Authenticated against the cluster Vault (userpass)
+      </p>
+    </form>
+  </div>
+
+  <!-- ============ APP ============ -->
+  <div id="app" class="hidden">
+    <div class="topbar">
+      <div class="brand"><div class="logo">IC</div><h1>Infras-CLI Console</h1></div>
+      <div class="spacer"></div>
+      <div class="health-pill" id="health">
+        <span><span class="dot" id="h-overall"></span> <span id="h-text">checking…</span></span>
+        <span class="dep"><span class="dot" id="h-vault"></span> vault</span>
+        <span class="dep"><span class="dot" id="h-k8s"></span> k8s</span>
+      </div>
+      <div class="user-chip">
+        <div class="av" id="u-av">?</div>
+        <span id="u-name" class="mono"></span>
+      </div>
+      <button class="btn-ghost" id="logout">Logout</button>
+    </div>
+
+    <div class="layout">
+      <nav class="nav">
+        <button data-tab="overview" class="active"><span class="ic">▦</span> Overview</button>
+        <button data-tab="setup"><span class="ic">⊕</span> Setup ACL</button>
+        <button data-tab="verify"><span class="ic">✓</span> Verify ACL</button>
+        <button data-tab="users"><span class="ic">◉</span> Users</button>
+        <button data-tab="token"><span class="ic">⚿</span> Token</button>
+      </nav>
+
+      <main class="content">
+
+        <!-- OVERVIEW -->
+        <section id="tab-overview">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Infrastructure</h2>
+                <p class="desc">Supported infra services, deployment status, and how many apps are provisioned on each.</p>
+              </div>
+              <button class="btn-inline secondary" id="ov-refresh" type="button">↻ Refresh</button>
+            </div>
+            <div class="tbl-wrap" id="infras-list"><div class="empty">Loading…</div></div>
+          </div>
+          <div class="panel">
+            <h2>Provisioned apps</h2>
+            <p class="desc">Apps that have at least one ACL provisioned (aggregated from Vault).</p>
+            <div class="tbl-wrap" id="apps-list"><div class="empty">Loading…</div></div>
+          </div>
+        </section>
+
+        <!-- SETUP -->
+        <section id="tab-setup" class="hidden">
+          <div class="panel">
+            <h2>Setup ACL</h2>
+            <p class="desc">Provision a database/user/ACL on an infra service, store credentials in Vault, create policies, and mint an app token.</p>
+            <form id="setup-form">
+              <div class="grid2">
+                <div class="field">
+                  <label for="s-name">Service name</label>
+                  <div class="combo">
+                    <input id="s-name" placeholder="Search or type a new app…" autocomplete="off" pattern="[a-zA-Z0-9_\-]+" required />
+                    <div class="combo-menu" id="s-app-menu"></div>
+                  </div>
+                  <div class="hint">Pick an existing app to add another infra, or type a new name to create one.</div>
+                </div>
+                <div class="field">
+                  <label for="s-type">Infrastructure</label>
+                  <select id="s-type">
+                    <option value="postgres">postgres</option>
+                    <option value="redis">redis</option>
+                    <option value="kafka">kafka</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row-actions">
+                <button class="btn-inline" type="submit" id="s-btn">Create ACL</button>
+              </div>
+            </form>
+            <div id="setup-result"></div>
+          </div>
+        </section>
+
+        <!-- VERIFY -->
+        <section id="tab-verify" class="hidden">
+          <div class="panel">
+            <h2>Verify ACL</h2>
+            <p class="desc">Check whether the user/database/ACL actually exists on the target service.</p>
+            <form id="verify-form">
+              <div class="grid2">
+                <div class="field">
+                  <label for="v-name">Service name</label>
+                  <div class="combo">
+                    <input id="v-name" placeholder="Search apps…" autocomplete="off" required />
+                    <div class="combo-menu" id="v-app-menu"></div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="v-type">Infrastructure</label>
+                  <select id="v-type">
+                    <option value="postgres">postgres</option>
+                    <option value="redis">redis</option>
+                    <option value="kafka">kafka</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row-actions">
+                <button class="btn-inline" type="submit" id="v-btn">Verify</button>
+              </div>
+            </form>
+            <div id="verify-result"></div>
+          </div>
+        </section>
+
+        <!-- USERS -->
+        <section id="tab-users" class="hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Users</h2>
+                <p class="desc">Vault userpass users and their attached policies.</p>
+              </div>
+              <button class="btn-inline secondary" id="usr-refresh" type="button">↻ Refresh</button>
+            </div>
+            <div class="tbl-wrap" id="users-list"><div class="empty">Loading…</div></div>
+          </div>
+
+          <div class="panel">
+            <h2>Create user</h2>
+            <p class="desc">Create a Vault userpass user with an auto-generated password.</p>
+            <form id="cu-form">
+              <div class="field" style="max-width:320px;">
+                <label for="cu-name">Username</label>
+                <div class="combo">
+                  <input id="cu-name" placeholder="Search or type a new username…" autocomplete="off" pattern="[a-zA-Z0-9_\-]+" required />
+                  <div class="combo-menu" id="cu-user-menu"></div>
+                </div>
+              </div>
+              <div class="row-actions"><button class="btn-inline" type="submit" id="cu-btn">Create user</button></div>
+            </form>
+            <div id="cu-result"></div>
+          </div>
+
+          <div class="panel">
+            <h2>Assign policy</h2>
+            <p class="desc">Grant a user access to an app (creates <code>app-&lt;app&gt;</code> + <code>modify-&lt;app&gt;</code> and assigns them).</p>
+            <form id="ap-form">
+              <div class="grid2">
+                <div class="field">
+                  <label for="ap-user">Username</label>
+                  <div class="combo">
+                    <input id="ap-user" placeholder="Search users…" autocomplete="off" required />
+                    <div class="combo-menu" id="ap-user-menu"></div>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="ap-app">App name</label>
+                  <div class="combo">
+                    <input id="ap-app" placeholder="Search apps…" autocomplete="off" required />
+                    <div class="combo-menu" id="ap-app-menu"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="row-actions"><button class="btn-inline" type="submit" id="ap-btn">Assign</button></div>
+            </form>
+            <div id="ap-result"></div>
+          </div>
+
+          <div class="panel">
+            <h2>Lookup user</h2>
+            <p class="desc">View a user's assigned policies.</p>
+            <form id="gu-form">
+              <div class="field" style="max-width:320px;">
+                <label for="gu-name">Username</label>
+                <div class="combo">
+                  <input id="gu-name" placeholder="Search users…" autocomplete="off" required />
+                  <div class="combo-menu" id="gu-user-menu"></div>
+                </div>
+              </div>
+              <div class="row-actions"><button class="btn-inline secondary" type="submit" id="gu-btn">Lookup</button></div>
+            </form>
+            <div id="gu-result"></div>
+          </div>
+        </section>
+
+        <!-- TOKEN -->
+        <section id="tab-token" class="hidden">
+          <div class="panel">
+            <h2>Generate token</h2>
+            <p class="desc">Mint a Vault token for an app. If the policy doesn't exist it is created automatically.</p>
+            <form id="tk-form">
+              <div class="grid2">
+                <div class="field">
+                  <label for="tk-app">App name</label>
+                  <div class="combo">
+                    <input id="tk-app" placeholder="Search apps…" autocomplete="off" required />
+                    <div class="combo-menu" id="tk-app-menu"></div>
+                  </div>
+                </div>
+                <div class="field"><label for="tk-ttl">TTL</label><input id="tk-ttl" value="24h" placeholder="24h / 48h / 7d" /></div>
+              </div>
+              <div class="field"><label for="tk-policy">Policy name (optional)</label><input id="tk-policy" placeholder="default: app-<app>" /></div>
+              <div class="row-actions"><button class="btn-inline" type="submit" id="tk-btn">Generate</button></div>
+            </form>
+            <div id="tk-result"></div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script>
+  (function () {
+    "use strict";
+    var API = "/api/v1";
+    var SS = window.sessionStorage;
+
+    // ---------- helpers ----------
+    function $(id) { return document.getElementById(id); }
+    function token() { return SS.getItem("infras_token"); }
+    function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); }
+
+    function toast(msg, kind) {
+      var t = document.createElement("div");
+      t.className = "toast " + (kind || "info");
+      t.textContent = msg;
+      $("toasts").appendChild(t);
+      setTimeout(function () { t.style.opacity = "0"; t.style.transform = "translateX(20px)"; t.style.transition = "all .25s"; setTimeout(function () { t.remove(); }, 250); }, 3200);
+    }
+
+    function busy(btn, on, label) {
+      if (on) { btn.dataset.label = btn.innerHTML; btn.innerHTML = '<span class="spin"></span> ' + (label || "Working…"); btn.disabled = true; }
+      else { btn.innerHTML = btn.dataset.label || label; btn.disabled = false; }
+    }
+
+    async function api(path, opts) {
+      opts = opts || {};
+      var headers = opts.headers || {};
+      if (opts.auth !== false) {
+        var tk = token();
+        if (!tk) { doLogout(); throw new Error("Not authenticated"); }
+        headers["Authorization"] = "Bearer " + tk;
+      }
+      if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+      var res = await fetch(API + path, {
+        method: opts.method || "GET",
+        headers: headers,
+        body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined
+      });
+      var data = null;
+      try { data = await res.json(); } catch (e) { /* may be empty */ }
+      if (res.status === 401 && opts.auth !== false) { toast("Session expired — please sign in", "err"); doLogout(); throw new Error("Unauthorized"); }
+      if (!res.ok) { throw new Error((data && data.detail) ? data.detail : ("HTTP " + res.status)); }
+      return data;
+    }
+
+    function copyBtn(text) {
+      var b = document.createElement("button");
+      b.className = "mini"; b.textContent = "Copy";
+      b.onclick = function () { navigator.clipboard.writeText(text).then(function () { toast("Copied", "ok"); }); };
+      return b;
+    }
+
+    function secretRow(label, value) {
+      var wrap = document.createElement("div");
+      var lab = document.createElement("div"); lab.style.cssText = "font-size:12px;color:var(--muted);font-weight:600;margin-top:12px;"; lab.textContent = label;
+      var row = document.createElement("div"); row.className = "secret";
+      var v = document.createElement("span"); v.className = "val blur"; v.textContent = value;
+      var reveal = document.createElement("button"); reveal.className = "mini"; reveal.textContent = "Reveal";
+      reveal.onclick = function () { v.classList.toggle("blur"); reveal.textContent = v.classList.contains("blur") ? "Reveal" : "Hide"; };
+      var cp = document.createElement("button"); cp.className = "mini"; cp.textContent = "Copy";
+      cp.onclick = function () { navigator.clipboard.writeText(value).then(function () { toast("Copied", "ok"); }); };
+      row.appendChild(v); row.appendChild(reveal); row.appendChild(cp);
+      wrap.appendChild(lab); wrap.appendChild(row);
+      return wrap;
+    }
+
+    function resultCard(ok, title) {
+      var c = document.createElement("div"); c.className = "result " + (ok ? "ok" : "bad");
+      var h = document.createElement("div"); h.className = "result-head"; h.textContent = (ok ? "✓ " : "✕ ") + title;
+      var b = document.createElement("div"); b.className = "result-body";
+      c.appendChild(h); c.appendChild(b);
+      return { card: c, body: b };
+    }
+
+    function kvList(obj) {
+      var dl = document.createElement("dl"); dl.className = "kv";
+      Object.keys(obj).forEach(function (k) {
+        if (k === "token" || k === "password") return;
+        var dt = document.createElement("dt"); dt.textContent = k;
+        var dd = document.createElement("dd"); dd.textContent = (typeof obj[k] === "object") ? JSON.stringify(obj[k]) : obj[k];
+        dl.appendChild(dt); dl.appendChild(dd);
+      });
+      return dl;
+    }
+
+    function warnLine(text) { var w = document.createElement("div"); w.className = "warn"; w.textContent = "⚠ " + text; return w; }
+
+    // ---------- auth ----------
+    async function doLogin(e) {
+      e.preventDefault();
+      var u = $("lg-user").value.trim(), p = $("lg-pass").value;
+      if (!u || !p) return;
+      busy($("lg-btn"), true, "Signing in…");
+      try {
+        var data = await api("/auth/login", { method: "POST", auth: false, body: { username: u, password: p } });
+        SS.setItem("infras_token", data.token);
+        SS.setItem("infras_user", data.username);
+        SS.setItem("infras_policies", JSON.stringify(data.policies || []));
+        showApp();
+        toast("Welcome, " + data.username, "ok");
+      } catch (err) {
+        toast(err.message || "Login failed", "err");
+        renderLoginBanner();
+      } finally {
+        busy($("lg-btn"), false, "Sign in");
+        $("lg-pass").value = "";
+      }
+    }
+
+    function doLogout() {
+      SS.removeItem("infras_token"); SS.removeItem("infras_user"); SS.removeItem("infras_policies");
+      stopHealth();
+      $("app").classList.add("hidden");
+      $("login").classList.remove("hidden");
+      renderLoginBanner();
+    }
+
+    function showApp() {
+      $("login").classList.add("hidden");
+      $("app").classList.remove("hidden");
+      var name = SS.getItem("infras_user") || "?";
+      $("u-name").textContent = name;
+      $("u-av").textContent = name.charAt(0).toUpperCase();
+      startHealth();
+      loadOverview();
+    }
+
+    // ---------- health ----------
+    var healthTimer = null;
+    function setDot(id, ok) { var d = $(id); d.className = "dot " + (ok ? "ok" : "bad"); }
+
+    async function fetchHealth() {
+      try {
+        var r = await fetch(API + "/health/ready");
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (e) { return null; }
+    }
+
+    // Returns {kind, msg} when something is wrong, or null when all-clear.
+    function describeHealth(h) {
+      if (!h) return { kind: "err", msg: "Cannot reach the Infras-CLI API. The service may be down." };
+      if (!h.vault_connected) return { kind: "err", msg: "Vault is unreachable — sign-in is unavailable. Please contact an administrator." };
+      if (h.vault_token_valid === false) return { kind: "warn", msg: "Vault service credentials are stale: the service token is invalid. Sign-in and infrastructure operations may fail until an administrator re-syncs the Vault token." };
+      return null;
+    }
+
+    async function renderLoginBanner() {
+      var b = $("login-banner"), t = $("login-banner-text");
+      var d = describeHealth(await fetchHealth());
+      if (!d) { b.className = "banner"; return; }
+      t.textContent = d.msg;
+      b.className = "banner show " + d.kind;
+    }
+
+    async function pollHealth() {
+      var h = await fetchHealth();
+      if (!h) {
+        setDot("h-overall", false); $("h-text").textContent = "unreachable";
+        setDot("h-vault", false); setDot("h-k8s", false);
+        return;
+      }
+      setDot("h-overall", h.status === "healthy");
+      $("h-text").textContent = h.status;
+      // Vault dot: green = token valid, amber = reachable but token stale, red = unreachable
+      var vdot = $("h-vault");
+      if (!h.vault_connected) vdot.className = "dot bad";
+      else if (h.vault_token_valid === false) vdot.className = "dot warn";
+      else vdot.className = "dot ok";
+      setDot("h-k8s", h.kubernetes_connected);
+    }
+    function startHealth() { pollHealth(); healthTimer = setInterval(pollHealth, 15000); }
+    function stopHealth() { if (healthTimer) clearInterval(healthTimer); healthTimer = null; }
+
+    // ---------- overview (apps + infras) ----------
+    var appsCache = [];   // [{name, infras:[...]}] — feeds app comboboxes
+    var usersCache = [];  // [{username, policies:[...]}] — feeds user comboboxes
+
+    // Normalized item providers for the comboboxes ({name, meta}).
+    function appItems() { return appsCache.map(function (a) { return { name: a.name, meta: (a.infras || []).join(", ") }; }); }
+    function userItems() { return usersCache.map(function (u) { return { name: u.username, meta: (u.policies || []).join(", ") }; }); }
+
+    function renderInfras(list) {
+      var el = $("infras-list");
+      if (!list.length) { el.innerHTML = '<div class="empty">None</div>'; return; }
+      var rows = list.map(function (i) {
+        var dep = i.deployed ? '<span class="pill-yes">● deployed</span>' : '<span class="pill-no">○ not deployed</span>';
+        var apps = (i.apps && i.apps.length)
+          ? '<div class="tags">' + i.apps.map(function (a) { return '<span class="tag">' + esc(a) + '</span>'; }).join("") + '</div>'
+          : '<span class="muted">—</span>';
+        return '<tr><td><code>' + esc(i.type) + '</code></td><td>' + dep + '</td><td>' + i.app_count + '</td><td>' + apps + '</td></tr>';
+      }).join("");
+      el.innerHTML = '<table class="tbl"><thead><tr><th>Infra</th><th>Status</th><th>#</th><th>Provisioned apps</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    function renderApps(list) {
+      var el = $("apps-list");
+      if (!list.length) { el.innerHTML = '<div class="empty">No apps provisioned yet</div>'; return; }
+      var rows = list.map(function (a) {
+        var tags = '<div class="tags">' + (a.infras || []).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join("") + '</div>';
+        return '<tr><td><strong>' + esc(a.name) + '</strong></td><td>' + tags + '</td></tr>';
+      }).join("");
+      el.innerHTML = '<table class="tbl"><thead><tr><th>App</th><th>Infras (ACL)</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    var ovLoading = false;
+    async function loadOverview() {
+      if (ovLoading) return;
+      ovLoading = true;
+      try {
+        try { renderInfras((await api("/acl/infras")).infras || []); }
+        catch (e) { $("infras-list").innerHTML = '<div class="empty">Failed: ' + esc(e.message) + '</div>'; }
+        try {
+          var ap = await api("/acl/apps");
+          appsCache = ap.apps || [];
+          renderApps(appsCache);
+        } catch (e) { $("apps-list").innerHTML = '<div class="empty">Failed: ' + esc(e.message) + '</div>'; }
+      } finally { ovLoading = false; }
+    }
+
+    // ---------- users list ----------
+    function renderUsers(list) {
+      var el = $("users-list");
+      if (!list.length) { el.innerHTML = '<div class="empty">No users found</div>'; return; }
+      var rows = list.map(function (u) {
+        var pols = (u.policies && u.policies.length)
+          ? '<div class="tags">' + u.policies.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join("") + '</div>'
+          : '<span class="muted">—</span>';
+        return '<tr><td><strong>' + esc(u.username) + '</strong></td><td>' + pols + '</td></tr>';
+      }).join("");
+      el.innerHTML = '<table class="tbl"><thead><tr><th>Username</th><th>Policies</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    var usrLoading = false;
+    async function loadUsers() {
+      if (usrLoading) return;
+      usrLoading = true;
+      try {
+        usersCache = (await api("/users/")).users || [];
+        renderUsers(usersCache);
+      } catch (e) {
+        $("users-list").innerHTML = '<div class="empty">Failed: ' + esc(e.message) + '</div>';
+      } finally { usrLoading = false; }
+    }
+
+    // ---------- searchable combobox ----------
+    function attachCombobox(input, menu, getItems) {
+      function render() {
+        var q = input.value.trim().toLowerCase();
+        var items = getItems();
+        if (!items.length) { menu.innerHTML = '<div class="combo-empty">No apps loaded yet</div>'; menu.classList.add("show"); return; }
+        var matches = items.filter(function (it) { return it.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 50);
+        if (!matches.length) { menu.innerHTML = '<div class="combo-empty">No match — typed value will be used as-is</div>'; menu.classList.add("show"); return; }
+        menu.innerHTML = "";
+        matches.forEach(function (it) {
+          var d = document.createElement("div"); d.className = "combo-item";
+          var n = document.createElement("span"); n.textContent = it.name;
+          var m = document.createElement("span"); m.className = "meta"; m.textContent = it.meta || "";
+          d.appendChild(n); d.appendChild(m);
+          d.onmousedown = function (e) { e.preventDefault(); input.value = it.name; menu.classList.remove("show"); };
+          menu.appendChild(d);
+        });
+        menu.classList.add("show");
+      }
+      input.addEventListener("focus", render);
+      input.addEventListener("input", render);
+      input.addEventListener("blur", function () { setTimeout(function () { menu.classList.remove("show"); }, 150); });
+    }
+
+    // ---------- tabs ----------
+    document.querySelectorAll(".nav button").forEach(function (b) {
+      b.onclick = function () {
+        document.querySelectorAll(".nav button").forEach(function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+        ["overview", "setup", "verify", "users", "token"].forEach(function (t) { $("tab-" + t).classList.toggle("hidden", t !== b.dataset.tab); });
+        if (b.dataset.tab === "overview") loadOverview();
+        if (b.dataset.tab === "users") loadUsers();
+      };
+    });
+
+    // ---------- Setup ACL ----------
+    $("setup-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var name = $("s-name").value.trim(), type = $("s-type").value;
+      var out = $("setup-result"); out.innerHTML = "";
+      busy($("s-btn"), true, type === "kafka" ? "Creating (Kafka restarts)…" : "Creating…");
+      try {
+        var d = await api("/acl/setup", { method: "POST", body: { service_name: name, infra_type: type } });
+        var r = resultCard(true, d.message || "ACL created");
+        r.body.appendChild(kvList(d.connection_details || {}));
+        var vp = document.createElement("div"); vp.style.cssText = "margin-top:12px;font-size:13px;";
+        vp.innerHTML = '<span style="color:var(--muted);font-family:var(--mono);">vault_path: </span><code>' + esc(d.vault_path) + "</code>";
+        r.body.appendChild(vp);
+        if (d.token) { r.body.appendChild(secretRow("App token (" + esc(name) + ")", d.token)); r.body.appendChild(warnLine("Store this token now — it is not retrievable later.")); }
+        out.appendChild(r.card);
+        toast("ACL created for " + name, "ok");
+        loadOverview();  // refresh apps list + combobox cache so the new app appears
+      } catch (err) {
+        var rb = resultCard(false, "Setup failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("s-btn"), false, "Create ACL"); }
+    };
+
+    // ---------- Verify ACL ----------
+    $("verify-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var name = $("v-name").value.trim(), type = $("v-type").value;
+      var out = $("verify-result"); out.innerHTML = "";
+      busy($("v-btn"), true, "Verifying…");
+      try {
+        var d = await api("/acl/verify", { method: "POST", body: { service_name: name, infra_type: type } });
+        var r = resultCard(!!d.success, d.message || (d.success ? "ACL verified" : "ACL not found"));
+        out.appendChild(r.card);
+      } catch (err) {
+        var rb = resultCard(false, "Verify failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("v-btn"), false, "Verify"); }
+    };
+
+    // ---------- Create user ----------
+    $("cu-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var name = $("cu-name").value.trim();
+      var out = $("cu-result"); out.innerHTML = "";
+      busy($("cu-btn"), true, "Creating…");
+      try {
+        var d = await api("/users/", { method: "POST", body: { username: name } });
+        var r = resultCard(true, d.message || "User created");
+        r.body.appendChild(kvList({ username: d.username, vault_path: d.vault_path }));
+        r.body.appendChild(secretRow("Password (one-time)", d.password));
+        r.body.appendChild(warnLine("Save this password — it won't be shown again."));
+        out.appendChild(r.card);
+        toast("User " + name + " created", "ok");
+        loadUsers();  // refresh users list + combobox cache
+      } catch (err) {
+        var rb = resultCard(false, "Create user failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("cu-btn"), false, "Create user"); }
+    };
+
+    // ---------- Assign policy ----------
+    $("ap-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var u = $("ap-user").value.trim(), app = $("ap-app").value.trim();
+      var out = $("ap-result"); out.innerHTML = "";
+      busy($("ap-btn"), true, "Assigning…");
+      try {
+        var d = await api("/users/" + encodeURIComponent(u) + "/policies", { method: "POST", body: { username: u, app_name: app } });
+        var r = resultCard(true, d.message || "Policies assigned");
+        var tags = document.createElement("div"); tags.className = "tags";
+        (d.policies || []).forEach(function (p) { var s = document.createElement("span"); s.className = "tag"; s.textContent = p; tags.appendChild(s); });
+        r.body.appendChild(tags);
+        out.appendChild(r.card);
+        toast("Policies assigned to " + u, "ok");
+        loadUsers();  // refresh policies shown in users list + combobox cache
+      } catch (err) {
+        var rb = resultCard(false, "Assign failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("ap-btn"), false, "Assign"); }
+    };
+
+    // ---------- Lookup user ----------
+    $("gu-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var u = $("gu-name").value.trim();
+      var out = $("gu-result"); out.innerHTML = "";
+      busy($("gu-btn"), true, "Looking up…");
+      try {
+        var d = await api("/users/" + encodeURIComponent(u));
+        var r = resultCard(true, "User: " + u);
+        var lab = document.createElement("div"); lab.style.cssText = "font-size:12px;color:var(--muted);margin-bottom:6px;"; lab.textContent = "policies";
+        var tags = document.createElement("div"); tags.className = "tags";
+        var pols = d.policies || [];
+        if (!pols.length) { tags.innerHTML = '<span style="color:var(--muted);font-size:12px;">(none)</span>'; }
+        pols.forEach(function (p) { var s = document.createElement("span"); s.className = "tag"; s.textContent = p; tags.appendChild(s); });
+        r.body.appendChild(lab); r.body.appendChild(tags);
+        out.appendChild(r.card);
+      } catch (err) {
+        var rb = resultCard(false, "Lookup failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("gu-btn"), false, "Lookup"); }
+    };
+
+    // ---------- Generate token ----------
+    $("tk-form").onsubmit = async function (e) {
+      e.preventDefault();
+      var app = $("tk-app").value.trim(), ttl = $("tk-ttl").value.trim() || "24h", pol = $("tk-policy").value.trim();
+      var out = $("tk-result"); out.innerHTML = "";
+      busy($("tk-btn"), true, "Generating…");
+      try {
+        var qs = new URLSearchParams({ app_name: app, ttl: ttl });
+        if (pol) qs.set("policy_name", pol);
+        var d = await api("/users/token?" + qs.toString(), { method: "POST" });
+        var r = resultCard(true, d.message || "Token generated");
+        r.body.appendChild(kvList({ app_name: d.app_name, policy_name: d.policy_name, ttl: d.ttl }));
+        r.body.appendChild(secretRow("Vault token", d.token));
+        r.body.appendChild(warnLine("Copy now — the token is not retrievable later."));
+        out.appendChild(r.card);
+        toast("Token generated for " + app, "ok");
+      } catch (err) {
+        var rb = resultCard(false, "Token generation failed"); rb.body.textContent = err.message; out.appendChild(rb.card);
+        toast(err.message, "err");
+      } finally { busy($("tk-btn"), false, "Generate"); }
+    };
+
+    // ---------- boot ----------
+    $("login-form").onsubmit = doLogin;
+    $("logout").onclick = doLogout;
+    $("ov-refresh").onclick = loadOverview;
+    $("usr-refresh").onclick = loadUsers;
+    // app comboboxes
+    attachCombobox($("tk-app"), $("tk-app-menu"), appItems);
+    attachCombobox($("s-name"), $("s-app-menu"), appItems);
+    attachCombobox($("v-name"), $("v-app-menu"), appItems);
+    attachCombobox($("ap-app"), $("ap-app-menu"), appItems);
+    // user comboboxes
+    attachCombobox($("cu-name"), $("cu-user-menu"), userItems);
+    attachCombobox($("ap-user"), $("ap-user-menu"), userItems);
+    attachCombobox($("gu-name"), $("gu-user-menu"), userItems);
+
+    if (token()) { showApp(); } else { $("login").classList.remove("hidden"); renderLoginBanner(); }
+  })();
+  </script>
+</body>
+</html>

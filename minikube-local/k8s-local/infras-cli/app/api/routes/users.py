@@ -76,6 +76,26 @@ async def create_user(request: UserCreateRequest):
         )
 
 
+@router.get("/")
+async def list_users():
+    """
+    List all Vault userpass users with their attached policies.
+
+    Returns:
+        Dictionary with the list of users and a count.
+    """
+    try:
+        vault = VaultService()
+        users = await vault.list_users()
+        return {"users": users, "count": len(users)}
+    except Exception as e:
+        logger.error("Failed to list users", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list users: {str(e)}"
+        )
+
+
 @router.post("/token", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def generate_token(
     app_name: str,
