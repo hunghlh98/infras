@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-03
 **Status:** Draft for review
-**Goal:** Deploy MinIO (S3-compatible object storage) into the local minikube cluster in a way that (a) keeps data safe and (b) rehearses a realistic production Kubernetes deployment.
+**Goal:** Deploy MinIO (S3-compatible object storage) into the local minikube cluster in a way that (a) keeps data safe, (b) rehearses a realistic production Kubernetes deployment, and (c) is provisionable through `infras-cli` (both CLI and API) as a first-class infra type alongside postgres/kafka.
 
 ---
 
@@ -137,16 +137,41 @@ Single MinIO pod with 4 drives.
 
 ---
 
-## 8. Out of Scope (this spec)
+## 8. infras-cli Integration (ACL provisioning)
 
-- Vault-sourced credentials (phase 2).
+MinIO becomes a first-class infra type in `infras-cli` (in `minikube-local/k8s-local/infras-cli/`). Both the CLI and the API share `ServiceFactory` + the `InfrastructureService` abstraction, so a single new service class lights up both entrypoints.
+
+### Provisioning model — bucket-per-app
+`setup-acl <app> minio` grants each app **its own bucket** named after the service, with full read/write on just that bucket (clean isolation, mirroring postgres' "a database per app"). The generated user's access key = the service name; the secret = a generated password stored in Vault.
+
+### Components
+| Change | File |
+|--------|------|
+| New service class `MinIOService` | `app/services/minio_service.py` (create) |
+| Register `"minio": MinIOService` | `app/services/factory.py` (modify) |
+| Add `"minio"` to `SUPPORTED_INFRA_TYPES` + CLI help | `app/api/routes/acl.py`, `app/cli/__main__.py` (modify) |
+| Endpoint settings `minio_endpoint`, `minio_secure` | `app/config.py` (modify) |
+| Dependency `minio==7.2.x` | `requirements.txt` (modify) |
+| Unit tests | `tests/unit/test_minio_service.py`, `tests/unit/test_factory_minio.py` (create) |
+
+### How it works
+- **Admin creds:** fetched from Vault at `infras/minio/root` (keys `username`/`password`), seeded at deploy time from the `storage-configuration` secret. `"root"` is already a `RESERVED_INFRA_KEYS` entry, so it is correctly excluded from app listings.
+- **Client:** the `minio` Python SDK's `MinioAdmin` (admin API over HTTP) + `Minio` (bucket ops) — consistent with how Keycloak uses `requests` (no `kubectl exec`; MinIO has a real admin API). Verified methods: `add_user(access_key, secret_key)`, `add_canned_policy(policy_name, policy)`, `set_user_or_group_policy(policy_name, user_or_group)`, `list_users()`, `Minio.make_bucket/bucket_exists`.
+- **Endpoint:** `settings.minio_endpoint` defaults to in-cluster `minio.infras-minio.svc.cluster.local:80` (`minio_secure=false`). Local CLI use overrides via `MINIO_ENDPOINT=s3.minio.local:8080`.
+- **`create_acl`:** ensure bucket → `add_canned_policy(app-<name>, <scoped JSON>)` → `add_user(<name>, <password>)` → `set_user_or_group_policy` → inherited `_store_credential` writes `minio.username`/`minio.password` to `infras/minio/<name>` and the app secret. Idempotent (bucket/user/policy upserts).
+- **`verify_acl`:** `service_name in admin.list_users()`. Infra errors (endpoint/Vault unreachable) propagate → API returns 502 "could not verify", never a misleading "not found" (matches the codebase's corrected behavior).
+- **Deploy:** adding the dependency requires rebuilding the infras-cli image into minikube's docker-env and `kubectl rollout restart` (per the repo's known deploy gotchas — `minikube image load` will not overwrite `:latest`).
+
+## 9. Out of Scope (this spec)
+
+- Vault as the *source of truth* for the Tenant's own root secret (phase 2). Note: infras-cli *reading* a copy of the root creds from `infras/minio/root` **is** in scope (§8) — this exclusion is only about the Tenant's `storage-configuration` secret still being a plain k8s Secret rather than injected from Vault.
 - Real TLS/auto-cert.
 - Multi-node distributed topology (documented as scale path only).
 - The global hostpath-provisioner fix as an *applied* change (documented; separate task recommended).
 
 ---
 
-## 9. Open Questions for Review
+## 10. Open Questions for Review
 
 1. **Provisioner fix:** apply now or separate task? (Recommendation: separate.)
 2. **PVC size:** 2Gi × 4 enough for your rehearsal, or larger?

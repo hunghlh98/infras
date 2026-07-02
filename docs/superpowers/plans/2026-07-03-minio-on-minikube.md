@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deploy MinIO into the local minikube cluster via the MinIO Operator as a single-node erasure-coded Tenant, exposed through nginx ingress, with host backups for data safety.
+**Goal:** Deploy MinIO into the local minikube cluster via the MinIO Operator as a single-node erasure-coded Tenant, exposed through nginx ingress, with host backups for data safety, and provisionable through `infras-cli` (CLI + API) as a first-class infra type.
 
 **Architecture:** Install the MinIO Operator (controller) into `minio-operator`. Declare a `Tenant` in `infras-minio` running one pool of 1 server × 4 drives with `EC:2` erasure coding on native `standard` PVCs. Serve HTTP (no auto-TLS) behind the existing nginx ingress on the `:8080` forwarder. Achieve "data safe on host" via a local `mc mirror` backup script — not a live host mount (MinIO does not support 9p/NFS backends).
 
@@ -21,6 +21,8 @@
 - **Dev credentials (change for anything real):** root `minio` / `minio123`; console user `console` / `console123`. These are local-dev placeholders.
 - **Backups:** local `mc` binary → `volumes/minio-backup/<timestamp>/` on the host.
 - **File layout:** all new manifests under `minikube-local/k8s-local/minio/`, matching existing service directories.
+- **infras-cli integration:** MinIO is a first-class infra type. Provisioning model is **bucket-per-app** (each app gets an own bucket named after the service, full RW on that bucket). Admin creds live in Vault at `infras/minio/root`. Client is the `minio` Python SDK (`MinioAdmin` + `Minio`). Endpoint default `minio.infras-minio.svc.cluster.local:80` (`minio_secure=false`); local CLI overrides via `MINIO_ENDPOINT`.
+- **infras-cli dependency:** `minio==7.2.15`. Adding it requires rebuilding the image into minikube's docker-env (`eval $(minikube -p minikube docker-env) && docker build ...`) and `kubectl rollout restart` — `minikube image load` will NOT overwrite `:latest`.
 - **Out of scope (documented, not built here):** Vault-sourced credentials, real TLS, multi-node topology, and the global `/tmp/hostpath-provisioner` fix (separate task — touches all services).
 
 ---
@@ -38,6 +40,15 @@
 | `minikube-local/k8s-local/minio/scripts/setup-dns.sh` (create) | Add `minio.local`/`s3.minio.local` to `/etc/hosts` |
 | `minikube-local/k8s-local/minio/scripts/backup.sh` (create) | `mc mirror` backup/restore/list/verify/cleanup/schedule |
 | `minikube-local/k8s-local/minio/README.md` (create) | Deploy, access, backup, scale-to-prod notes |
+| `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh` (create) | Seed `infras/minio/root` into Vault for infras-cli |
+| `.../infras-cli/app/config.py` (modify) | Add `minio_endpoint` / `minio_secure` |
+| `.../infras-cli/requirements.txt` (modify) | Add `minio==7.2.15` |
+| `.../infras-cli/app/services/minio_service.py` (create) | `MinIOService` ACL provisioning |
+| `.../infras-cli/app/services/factory.py` (modify) | Register `"minio"` |
+| `.../infras-cli/app/api/routes/acl.py` (modify) | Add `"minio"` to `SUPPORTED_INFRA_TYPES` |
+| `.../infras-cli/app/cli/__main__.py` (modify) | Mention `minio` in help text |
+| `.../infras-cli/tests/unit/test_minio_service.py` (create) | MinIOService unit tests |
+| `.../infras-cli/tests/unit/test_factory_minio.py` (create) | Factory registration test |
 
 ---
 
@@ -685,6 +696,14 @@ kubectl apply -f secrets.yaml
 kubectl apply -f tenant.yaml
 kubectl apply -f ingress.yaml
 ./scripts/setup-dns.sh
+./scripts/store-admin-creds.sh   # seed infras/minio/root in Vault for infras-cli
+```
+
+## Provisioning app access (infras-cli)
+MinIO is a first-class infra type. Each app gets its own bucket + scoped user:
+```bash
+infras-cli setup-acl <app> minio     # creates bucket <app>, user <app>, stores creds in Vault
+infras-cli verify-acl <app> minio    # confirms the user exists
 ```
 
 ## Access
@@ -729,8 +748,441 @@ git commit -m "docs(minio): deploy, access, backup, and scale-to-prod guide"
 
 ---
 
+## Task 8: infras-cli — Config, Dependency & MinIOService
+
+**Files:**
+- Modify: `minikube-local/k8s-local/infras-cli/app/config.py`
+- Modify: `minikube-local/k8s-local/infras-cli/requirements.txt`
+- Create: `minikube-local/k8s-local/infras-cli/app/services/minio_service.py`
+- Create: `minikube-local/k8s-local/infras-cli/tests/unit/test_minio_service.py`
+
+**Interfaces:**
+- Consumes: `InfrastructureService` base (`app/services/base.py`), `settings` (`app/config.py`), Vault path `infras/minio/root` (seeded in Task 10).
+- Produces: class `MinIOService` with `create_acl(service_name, password, **kwargs) -> dict`, `verify_acl(service_name, **kwargs) -> bool`, `get_vault_path(service_name) -> str`. Task 9 registers it.
+
+> All commands below run from `minikube-local/k8s-local/infras-cli/` with the venv active: `cd minikube-local/k8s-local/infras-cli && source venv/bin/activate`.
+
+- [ ] **Step 1: Add endpoint settings to config**
+
+In `app/config.py`, after the `keycloak_port` line (~line 33), add:
+
+```python
+    minio_endpoint: str = "minio.infras-minio.svc.cluster.local:80"
+    minio_secure: bool = False
+```
+
+- [ ] **Step 2: Add the dependency**
+
+In `requirements.txt`, after the `requests==2.31.0` block, add:
+
+```
+# MinIO Admin/S3 Client
+minio==7.2.15
+```
+
+Then install it into the venv:
+
+Run: `pip install minio==7.2.15`
+Expected: `Successfully installed minio-7.2.15 ...`
+
+- [ ] **Step 3: Write the failing unit test**
+
+Create `tests/unit/test_minio_service.py`:
+
+```python
+"""Unit tests for MinIOService (mocked Vault / MinIO clients)."""
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.services.minio_service import MinIOService
+
+
+def _service():
+    vault = MagicMock()
+    vault.fetch_secret = AsyncMock(side_effect=["minio", "minio123"])
+    vault._detect_mount = MagicMock(return_value=("secret", "infras/minio/app1"))
+    vault.client = MagicMock()
+    svc = MinIOService(vault, MagicMock())
+    # Neutralize the inherited Vault write so we test only MinIO behavior.
+    svc._store_credential = AsyncMock(return_value="infras/minio/app1")
+    return svc, vault
+
+
+@pytest.mark.asyncio
+async def test_create_acl_provisions_bucket_user_and_policy():
+    svc, vault = _service()
+    admin, s3 = MagicMock(), MagicMock()
+    s3.bucket_exists.return_value = False
+    with patch.object(MinIOService, "_clients", return_value=(admin, s3)):
+        result = await svc.create_acl("app1", "secretpw")
+
+    s3.make_bucket.assert_called_once_with("app1")
+    admin.add_user.assert_called_once_with(access_key="app1", secret_key="secretpw")
+    admin.set_user_or_group_policy.assert_called_once_with(
+        policy_name="app-app1", user_or_group="app1"
+    )
+    # Policy JSON scopes to just this bucket
+    _, kw = admin.add_canned_policy.call_args
+    policy = json.loads(kw["policy"])
+    assert policy["Statement"][0]["Resource"] == [
+        "arn:aws:s3:::app1",
+        "arn:aws:s3:::app1/*",
+    ]
+    assert result["bucket"] == "app1"
+    assert result["access_key"] == "app1"
+    assert result["vault_path"] == "infras/minio/app1"
+
+
+@pytest.mark.asyncio
+async def test_verify_acl_true_when_user_listed():
+    svc, _ = _service()
+    admin = MagicMock()
+    admin.list_users.return_value = {"app1": {}, "other": {}}
+    with patch.object(MinIOService, "_clients", return_value=(admin, MagicMock())):
+        assert await svc.verify_acl("app1") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_acl_false_when_user_absent():
+    svc, _ = _service()
+    admin = MagicMock()
+    admin.list_users.return_value = {"other": {}}
+    with patch.object(MinIOService, "_clients", return_value=(admin, MagicMock())):
+        assert await svc.verify_acl("app1") is False
+
+
+def test_get_vault_path():
+    svc, _ = _service()
+    assert svc.get_vault_path("app1") == "infras/minio/app1"
+```
+
+- [ ] **Step 4: Run the test to verify it fails**
+
+Run: `pytest tests/unit/test_minio_service.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.minio_service'`.
+
+- [ ] **Step 5: Implement MinIOService**
+
+Create `app/services/minio_service.py`:
+
+```python
+"""MinIO ACL provisioning service (bucket-per-app + scoped IAM policy)."""
+
+import json
+import structlog
+from typing import Dict, Any
+
+from minio import Minio, MinioAdmin
+from minio.credentials import StaticProvider
+
+from .base import InfrastructureService
+from ..config import settings
+
+logger = structlog.get_logger(__name__)
+
+
+class MinIOService(InfrastructureService):
+    """Provision MinIO access: a dedicated bucket + scoped policy + user per app."""
+
+    def _clients(self, admin_user: str, admin_pass: str):
+        """Build (MinioAdmin, Minio) clients from admin credentials."""
+        creds = StaticProvider(admin_user, admin_pass)
+        admin = MinioAdmin(
+            endpoint=settings.minio_endpoint,
+            credentials=creds,
+            secure=settings.minio_secure,
+        )
+        s3 = Minio(
+            settings.minio_endpoint,
+            access_key=admin_user,
+            secret_key=admin_pass,
+            secure=settings.minio_secure,
+        )
+        return admin, s3
+
+    @staticmethod
+    def _policy_json(bucket: str) -> str:
+        """Full read/write scoped to exactly one bucket."""
+        return json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:*"],
+                    "Resource": [
+                        f"arn:aws:s3:::{bucket}",
+                        f"arn:aws:s3:::{bucket}/*",
+                    ],
+                }
+            ],
+        })
+
+    async def create_acl(self, service_name: str, password: str, **kwargs) -> Dict[str, Any]:
+        logger.info("Creating MinIO ACL", service_name=service_name)
+
+        admin_user = await self.vault.fetch_secret("infras/minio/root", "username")
+        admin_pass = await self.vault.fetch_secret("infras/minio/root", "password")
+
+        admin, s3 = self._clients(admin_user, admin_pass)
+        bucket = service_name
+        policy_name = f"app-{service_name}"
+
+        # 1. Bucket (idempotent)
+        if not s3.bucket_exists(bucket):
+            s3.make_bucket(bucket)
+            logger.info("Created MinIO bucket", bucket=bucket)
+
+        # 2. Scoped canned policy (upsert)
+        admin.add_canned_policy(policy_name=policy_name, policy=self._policy_json(bucket))
+
+        # 3. User whose access key IS the service name (upsert)
+        admin.add_user(access_key=service_name, secret_key=password)
+
+        # 4. Attach the policy to the user
+        admin.set_user_or_group_policy(policy_name=policy_name, user_or_group=service_name)
+
+        # 5. Store credential in Vault (+ app secret) via the inherited helper
+        vault_path = await self._store_credential(service_name, password)
+
+        logger.info("MinIO ACL created", service_name=service_name, vault_path=vault_path)
+        return {
+            "endpoint": settings.minio_endpoint,
+            "bucket": bucket,
+            "access_key": service_name,
+            "policy": policy_name,
+            "vault_path": vault_path,
+        }
+
+    async def verify_acl(self, service_name: str, **kwargs) -> bool:
+        logger.info("Verifying MinIO ACL", service_name=service_name)
+        admin_user = await self.vault.fetch_secret("infras/minio/root", "username")
+        admin_pass = await self.vault.fetch_secret("infras/minio/root", "password")
+        admin, _ = self._clients(admin_user, admin_pass)
+        # Errors (endpoint/Vault unreachable) propagate -> reported as "could not verify".
+        users = admin.list_users()
+        exists = service_name in users
+        if exists:
+            logger.info("MinIO ACL verified", service_name=service_name)
+        else:
+            logger.warning("MinIO ACL not found", service_name=service_name)
+        return exists
+
+    def get_vault_path(self, service_name: str) -> str:
+        return f"infras/minio/{service_name}"
+```
+
+- [ ] **Step 6: Run the test to verify it passes**
+
+Run: `pytest tests/unit/test_minio_service.py -v`
+Expected: PASS — all four tests green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add minikube-local/k8s-local/infras-cli/app/config.py \
+        minikube-local/k8s-local/infras-cli/requirements.txt \
+        minikube-local/k8s-local/infras-cli/app/services/minio_service.py \
+        minikube-local/k8s-local/infras-cli/tests/unit/test_minio_service.py
+git commit -m "feat(infras-cli): MinIOService for bucket-per-app ACL provisioning"
+```
+
+---
+
+## Task 9: infras-cli — Register MinIO in Factory, API & CLI
+
+**Files:**
+- Modify: `minikube-local/k8s-local/infras-cli/app/services/factory.py`
+- Modify: `minikube-local/k8s-local/infras-cli/app/api/routes/acl.py`
+- Modify: `minikube-local/k8s-local/infras-cli/app/cli/__main__.py`
+- Create: `minikube-local/k8s-local/infras-cli/tests/unit/test_factory_minio.py`
+
+**Interfaces:**
+- Consumes: `MinIOService` (Task 8).
+- Produces: `ServiceFactory.create_service("minio", ...)` returns a `MinIOService`; `"minio"` appears in `SUPPORTED_INFRA_TYPES` so `list_infras`/`list_apps` cover it.
+
+- [ ] **Step 1: Write the failing factory test**
+
+Create `tests/unit/test_factory_minio.py`:
+
+```python
+"""Factory must know about the minio infra type."""
+
+from unittest.mock import MagicMock
+
+from app.services.factory import ServiceFactory
+from app.services.minio_service import MinIOService
+
+
+def test_factory_creates_minio_service():
+    svc = ServiceFactory.create_service("minio", MagicMock(), MagicMock())
+    assert isinstance(svc, MinIOService)
+
+
+def test_minio_in_supported_services():
+    assert "minio" in ServiceFactory.get_supported_services()
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `pytest tests/unit/test_factory_minio.py -v`
+Expected: FAIL — `ValueError: Unsupported infrastructure type: 'minio'`.
+
+- [ ] **Step 3: Register in the factory**
+
+In `app/services/factory.py`, add the import after the other service imports:
+
+```python
+from .minio_service import MinIOService
+```
+
+and add to the `SUPPORTED_SERVICES` dict (after the `"kafka"` entry):
+
+```python
+        "minio": MinIOService,
+```
+
+- [ ] **Step 4: Add `minio` to the API's supported types**
+
+In `app/api/routes/acl.py`, change:
+
+```python
+SUPPORTED_INFRA_TYPES = ["postgres", "redis", "kafka", "mysql", "keycloak"]
+```
+
+to:
+
+```python
+SUPPORTED_INFRA_TYPES = ["postgres", "redis", "kafka", "mysql", "keycloak", "minio"]
+```
+
+- [ ] **Step 5: Mention minio in the CLI help**
+
+In `app/cli/__main__.py`, update the `infra_type` argument help strings for both the `setup_acl` and (if present) verify commands, changing `(mysql, postgres, redis, kafka, keycloak)` to `(mysql, postgres, redis, kafka, keycloak, minio)`.
+
+Run to find every occurrence:
+```bash
+grep -n "kafka, keycloak" app/cli/__main__.py
+```
+Replace each `mysql, postgres, redis, kafka, keycloak` with `mysql, postgres, redis, kafka, keycloak, minio`.
+
+- [ ] **Step 6: Run the factory test to verify it passes**
+
+Run: `pytest tests/unit/test_factory_minio.py tests/unit/test_minio_service.py -v`
+Expected: PASS — all tests green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add minikube-local/k8s-local/infras-cli/app/services/factory.py \
+        minikube-local/k8s-local/infras-cli/app/api/routes/acl.py \
+        minikube-local/k8s-local/infras-cli/app/cli/__main__.py \
+        minikube-local/k8s-local/infras-cli/tests/unit/test_factory_minio.py
+git commit -m "feat(infras-cli): register minio infra type in factory, API and CLI"
+```
+
+---
+
+## Task 10: Seed Vault, Rebuild Image & End-to-End Provision
+
+**Files:**
+- Create: `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh`
+
+**Interfaces:**
+- Consumes: running MinIO Tenant (Task 4); `MinIOService` registered (Task 9); Secret `storage-configuration` (Task 3).
+- Produces: Vault secret `infras/minio/root`; a redeployed infras-cli image; a verified end-to-end `setup-acl <app> minio`.
+
+- [ ] **Step 1: Write the Vault-seed script**
+
+Create `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh`. It reads the root creds from the k8s Secret and writes them to `infras/minio/root` in Vault by exec-ing the Vault pod (no local vault CLI needed):
+
+```bash
+#!/bin/bash
+# Seed MinIO root credentials into Vault at infras/minio/root for infras-cli.
+set -euo pipefail
+
+NS_MINIO="infras-minio"
+NS_VAULT="infras-vault"
+ROOT_TOKEN_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.vault-init/root-token.txt"
+
+env=$(kubectl get secret storage-configuration -n "$NS_MINIO" -o jsonpath='{.data.config\.env}' | base64 -d)
+USER=$(echo "$env" | sed -n 's/^export MINIO_ROOT_USER="\(.*\)"$/\1/p')
+PASS=$(echo "$env" | sed -n 's/^export MINIO_ROOT_PASSWORD="\(.*\)"$/\1/p')
+TOKEN=$(cat "$ROOT_TOKEN_FILE")
+
+echo "→ Writing infras/minio/root to Vault..."
+kubectl exec -n "$NS_VAULT" statefulset/vault -- sh -c \
+  "VAULT_TOKEN='$TOKEN' vault kv put secret/infras/minio/root username='$USER' password='$PASS'"
+
+echo "✅ Seeded infras/minio/root"
+```
+
+> If your Vault KV mount path is not `secret/`, adjust the `vault kv put` path to match the mount used by the other `infras/*` secrets (check `kubectl exec -n infras-vault statefulset/vault -- vault secrets list`).
+
+- [ ] **Step 2: Seed the credential and verify**
+
+Run:
+```bash
+chmod +x minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
+./minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
+kubectl exec -n infras-vault statefulset/vault -- sh -c \
+  "VAULT_TOKEN=$(cat minikube-local/k8s-local/.vault-init/root-token.txt) vault kv get secret/infras/minio/root"
+```
+Expected: `✅ Seeded infras/minio/root`, then a table showing `username` and `password`.
+
+- [ ] **Step 3: Rebuild the infras-cli image into minikube and roll out**
+
+Per the repo's deploy gotchas (`minikube image load` will NOT overwrite `:latest`):
+
+```bash
+cd minikube-local/k8s-local/infras-cli
+eval $(minikube -p minikube docker-env)
+docker build --network=host -t infras-cli:latest .
+eval $(minikube -p minikube docker-env -u)
+kubectl rollout restart deployment/infras-cli -n infras-cli
+kubectl rollout status deployment/infras-cli -n infras-cli --timeout=120s
+```
+Expected: build succeeds; `deployment "infras-cli" successfully rolled out`.
+
+- [ ] **Step 4: End-to-end provision via the CLI (in-cluster exec)**
+
+Run (uses the in-cluster API path, which resolves `minio.infras-minio.svc.cluster.local`):
+```bash
+POD=$(kubectl get pod -n infras-cli -l app=infras-cli -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n infras-cli "$POD" -- python3 -m app.cli setup-acl demoapp minio
+kubectl exec -n infras-cli "$POD" -- python3 -m app.cli verify-acl demoapp minio 2>/dev/null || true
+```
+Expected: setup reports success with `bucket=demoapp`, `access_key=demoapp`, a `vault_path` of `infras/minio/demoapp`, and an issued token.
+
+- [ ] **Step 5: Confirm the provisioned resources**
+
+Run:
+```bash
+# Vault holds the app credential
+kubectl exec -n infras-vault statefulset/vault -- sh -c \
+  "VAULT_TOKEN=$(cat minikube-local/k8s-local/.vault-init/root-token.txt) vault kv get secret/infras/minio/demoapp"
+# Bucket + user exist in MinIO
+BIN=minikube-local/k8s-local/minio/scripts/bin/mc
+$BIN ls infras/ | grep demoapp
+$BIN admin user list infras | grep demoapp
+```
+Expected: Vault shows `minio.username=demoapp` / `minio.password=...`; `mc` lists the `demoapp` bucket and the `demoapp` user. This proves both API and CLI paths provision a real, isolated bucket-per-app ACL.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
+git commit -m "feat(minio): seed Vault admin creds + end-to-end infras-cli provisioning"
+```
+
+---
+
 ## Self-Review Notes
 
-- **Spec coverage:** Operator install (T2), Tenant 1×4 EC:2 on standard PVCs (T4), HTTP + ingress `minio.local`/`s3.minio.local` (T5), k8s Secret creds with Vault noted phase-2 (T3/T7), `mc mirror` backups to `volumes/minio-backup/` (T6), single-node anti-affinity adaptation (T4/global constraints), resource-quota caveat (T1), provisioner-fragility documented as out-of-scope follow-up (T7/global constraints). All spec §2–§8 items map to a task.
+- **Spec coverage:** Operator install (T2), Tenant 1×4 EC:2 on standard PVCs (T4), HTTP + ingress `minio.local`/`s3.minio.local` (T5), k8s Secret creds with Vault noted phase-2 (T3/T7), `mc mirror` backups to `volumes/minio-backup/` (T6), single-node anti-affinity adaptation (T4/global constraints), resource-quota caveat (T1), provisioner-fragility documented as out-of-scope follow-up (T7/global constraints), **infras-cli integration: config+dep+MinIOService (T8), factory/API/CLI registration (T9), Vault seeding + image rebuild + end-to-end provision (T10)** covering spec §8. All spec §2–§10 items map to a task.
+- **Type consistency (infras-cli):** `MinIOService.create_acl/verify_acl/get_vault_path` signatures match the `InfrastructureService` base and how `acl.py` calls them; `_clients` and `_policy_json` are patched/asserted identically in `test_minio_service.py`; factory key `"minio"` matches `SUPPORTED_INFRA_TYPES` and the `infras-minio` namespace probed by `list_infras`.
+- **Endpoint assumption:** `MinIOService` defaults to in-cluster `minio.infras-minio.svc.cluster.local:80`. The end-to-end verify (T10 Step 4) runs *inside* the cluster (via `kubectl exec` into the infras-cli pod) so DNS resolves; local host runs would need `MINIO_ENDPOINT=s3.minio.local:8080`.
 - **Service-name assumption:** the ingress/backup steps assume Operator service names `minio` and `infras-console` and ports `80`/`9090`. T4 Step 4 and T5 Step 1 explicitly print the actual values so the implementer corrects them if the pinned Operator build differs.
 - **Verification adapted for infra:** each task's "test" is an apply-then-verify with concrete expected output; T6 includes a real create→verify→restore data-safety drill.
