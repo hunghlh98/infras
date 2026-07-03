@@ -1039,52 +1039,23 @@ git commit -m "feat(infras-cli): register minio infra type in factory, API and C
 
 ---
 
-## Task 10: Seed Vault, Rebuild Image & End-to-End Provision
+## Task 10: Rebuild infras-cli Image & End-to-End Provision
 
-**Files:**
-- Create: `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh`
+**Files:** none (deployment actions only).
 
 **Interfaces:**
-- Consumes: running MinIO Tenant (Task 4); `MinIOService` registered (Task 9); Secret `storage-configuration` (Task 3).
-- Produces: Vault secret `infras/minio/root`; a redeployed infras-cli image; a verified end-to-end `setup-acl <app> minio`.
+- Consumes: running MinIO Tenant (deploy.sh); `MinIOService` registered (Task 9); Vault secret `infras/minio/root` (already seeded by `deploy.sh`).
+- Produces: a redeployed infras-cli image; a verified end-to-end `setup-acl <app> minio`.
 
-- [ ] **Step 1: Write the Vault-seed script**
+- [ ] **Step 1–2: Vault seed — already done by `deploy.sh`**
 
-Create `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh`. It reads the root creds from the k8s Secret and writes them to `infras/minio/root` in Vault by exec-ing the Vault pod (no local vault CLI needed):
-
+`infras/minio/root` (mount `infras/`, KV v2) is created and reused by `deploy.sh` — there is no separate `store-admin-creds.sh`. Confirm it exists:
 ```bash
-#!/bin/bash
-# Seed MinIO root credentials into Vault at infras/minio/root for infras-cli.
-set -euo pipefail
-
-NS_MINIO="infras-minio"
-NS_VAULT="infras-vault"
-ROOT_TOKEN_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.vault-init/root-token.txt"
-
-env=$(kubectl get secret storage-configuration -n "$NS_MINIO" -o jsonpath='{.data.config\.env}' | base64 -d)
-USER=$(echo "$env" | sed -n 's/^export MINIO_ROOT_USER="\(.*\)"$/\1/p')
-PASS=$(echo "$env" | sed -n 's/^export MINIO_ROOT_PASSWORD="\(.*\)"$/\1/p')
-TOKEN=$(cat "$ROOT_TOKEN_FILE")
-
-echo "→ Writing infras/minio/root to Vault..."
-kubectl exec -n "$NS_VAULT" statefulset/vault -- sh -c \
-  "VAULT_TOKEN='$TOKEN' vault kv put secret/infras/minio/root username='$USER' password='$PASS'"
-
-echo "✅ Seeded infras/minio/root"
+RT=$(cat minikube-local/k8s-local/.vault-init/root-token.txt)
+kubectl exec -n infras-vault statefulset/vault -- \
+  sh -c "VAULT_TOKEN='$RT' vault kv get -field=username infras/minio/root"
 ```
-
-> If your Vault KV mount path is not `secret/`, adjust the `vault kv put` path to match the mount used by the other `infras/*` secrets (check `kubectl exec -n infras-vault statefulset/vault -- vault secrets list`).
-
-- [ ] **Step 2: Seed the credential and verify**
-
-Run:
-```bash
-chmod +x minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
-./minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
-kubectl exec -n infras-vault statefulset/vault -- sh -c \
-  "VAULT_TOKEN=$(cat minikube-local/k8s-local/.vault-init/root-token.txt) vault kv get secret/infras/minio/root"
-```
-Expected: `✅ Seeded infras/minio/root`, then a table showing `username` and `password`.
+Expected: `minio`.
 
 - [ ] **Step 3: Rebuild the infras-cli image into minikube and roll out**
 
@@ -1114,22 +1085,16 @@ Expected: setup reports success with `bucket=demoapp`, `access_key=demoapp`, a `
 
 Run:
 ```bash
-# Vault holds the app credential
+# Vault holds the app credential (mount `infras/`, NOT `secret/`)
 kubectl exec -n infras-vault statefulset/vault -- sh -c \
-  "VAULT_TOKEN=$(cat minikube-local/k8s-local/.vault-init/root-token.txt) vault kv get secret/infras/minio/demoapp"
-# Bucket + user exist in MinIO
-BIN=minikube-local/k8s-local/minio/scripts/bin/mc
-$BIN ls infras/ | grep demoapp
-$BIN admin user list infras | grep demoapp
+  "VAULT_TOKEN=$(cat minikube-local/k8s-local/.vault-init/root-token.txt) vault kv get infras/minio/demoapp"
+# Bucket + user exist in MinIO (via port-forward + mc, or the console)
 ```
-Expected: Vault shows `minio.username=demoapp` / `minio.password=...`; `mc` lists the `demoapp` bucket and the `demoapp` user. This proves both API and CLI paths provision a real, isolated bucket-per-app ACL.
+Expected: Vault shows `minio.username=demoapp` / `minio.password=...`; MinIO has the `demoapp` bucket and the `demoapp` user with policy `app-demoapp` attached. This proves the deployed infras-cli provisions a real, isolated bucket-per-app ACL.
 
-- [ ] **Step 6: Commit**
+> **Note (as-built):** a direct `kubectl exec … python3 -m app.cli setup-acl` needs a `VAULT_TOKEN` (the API obtains one via login; a raw CLI exec does not inherit one) — pass `env VAULT_TOKEN=<token>`. Clean up test artifacts afterward (`mc rb`/`admin user remove`/`admin policy remove` + `vault kv metadata delete`).
 
-```bash
-git add minikube-local/k8s-local/minio/scripts/store-admin-creds.sh
-git commit -m "feat(minio): seed Vault admin creds + end-to-end infras-cli provisioning"
-```
+- [ ] **Step 6: No commit** — Task 10 is deployment-only (image rebuild + rollout); no repo artifacts change.
 
 ---
 
