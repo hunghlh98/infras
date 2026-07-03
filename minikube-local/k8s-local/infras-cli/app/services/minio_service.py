@@ -40,20 +40,29 @@ class MinIOService(InfrastructureService):
         )
         return admin, s3
 
-    # S3 bucket naming: 3-63 chars, lowercase letters/digits/hyphens, must
-    # start and end alphanumeric. The service name is used as both the bucket
-    # and the access key, so reject invalid names up front with a clear error
-    # (ValueError -> HTTP 400) instead of an opaque S3 failure at make_bucket.
-    _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+    @staticmethod
+    def _bucket_name(service_name: str) -> str:
+        """Derive an S3-valid bucket name from the service name.
 
-    @classmethod
-    def _validate_name(cls, service_name: str) -> None:
-        if not cls._NAME_RE.match(service_name):
+        The MinIO *user* (access key) keeps the exact service name — MinIO
+        allows underscores/uppercase there, and it stays consistent with the
+        app's identity and Vault (e.g. `super_app`, like postgres/kafka). Only
+        the *bucket* must obey S3 rules (3-63 chars, lowercase alphanumerics
+        and hyphens, start/end alphanumeric), so we sanitize just the bucket:
+        lowercase, non-alphanumerics → '-', collapse/trim hyphens.
+
+        Raises ValueError only when no valid bucket name can be formed (too
+        short/long or empty after sanitizing).
+        """
+        b = re.sub(r"[^a-z0-9]+", "-", service_name.lower()).strip("-")
+        b = re.sub(r"-{2,}", "-", b)
+        if not re.match(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", b):
             raise ValueError(
-                f"Invalid MinIO service name '{service_name}': must be 3-63 chars, "
-                "lowercase letters/digits/hyphens, and start & end alphanumeric "
-                "(S3 bucket naming rules)."
+                f"Cannot derive a valid S3 bucket name from '{service_name}': "
+                f"result '{b}' must be 3-63 chars of lowercase letters/digits/hyphens "
+                "(start & end alphanumeric). Choose a longer/simpler name."
             )
+        return b
 
     @staticmethod
     def _policy_json(bucket: str) -> str:
@@ -74,13 +83,14 @@ class MinIOService(InfrastructureService):
 
     async def create_acl(self, service_name: str, password: str, **kwargs) -> Dict[str, Any]:
         logger.info("Creating MinIO ACL", service_name=service_name)
-        self._validate_name(service_name)
 
         admin_user = await self.vault.fetch_secret("infras/minio/root", "username")
         admin_pass = await self.vault.fetch_secret("infras/minio/root", "password")
 
         admin, s3 = self._clients(admin_user, admin_pass)
-        bucket = service_name
+        # User/access-key keeps the exact service name; bucket is sanitized to
+        # satisfy S3 naming (e.g. super_app -> user super_app, bucket super-app).
+        bucket = self._bucket_name(service_name)
         policy_name = f"app-{service_name}"
 
         # 1. Bucket (idempotent)

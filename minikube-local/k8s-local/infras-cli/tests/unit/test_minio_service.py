@@ -23,12 +23,36 @@ def _service():
     return svc, vault
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("bad", ["App1", "ap", "app_1", "-app", "app-"])
-async def test_create_acl_rejects_invalid_names(bad):
-    svc, _ = _service()
+@pytest.mark.parametrize("name,bucket", [
+    ("super_app", "super-app"),   # underscore -> hyphen (S3 rule)
+    ("App1", "app1"),             # lowercased
+    ("my_App-1", "my-app-1"),
+    ("-app-", "app"),             # trimmed
+])
+def test_bucket_name_sanitizes(name, bucket):
+    assert MinIOService._bucket_name(name) == bucket
+
+
+@pytest.mark.parametrize("bad", ["ap", "__", "a"])
+def test_bucket_name_rejects_unformable(bad):
     with pytest.raises(ValueError):
-        await svc.create_acl(bad, "secretpw")
+        MinIOService._bucket_name(bad)
+
+
+@pytest.mark.asyncio
+async def test_create_acl_underscore_name_keeps_user_sanitizes_bucket():
+    svc, _ = _service()
+    admin = MagicMock(spec=MinioAdmin)
+    s3 = MagicMock(spec=Minio)
+    s3.bucket_exists.return_value = False
+    with patch.object(MinIOService, "_clients", return_value=(admin, s3)):
+        result = await svc.create_acl("super_app", "secretpw")
+    # user/access-key keeps the exact name; bucket is sanitized
+    s3.make_bucket.assert_called_once_with("super-app")
+    admin.user_add.assert_called_once_with("super_app", "secretpw")
+    admin.policy_set.assert_called_once_with("app-super_app", user="super_app")
+    assert result["bucket"] == "super-app"
+    assert result["access_key"] == "super_app"
 
 
 def test_policy_json_scopes_to_single_bucket():
