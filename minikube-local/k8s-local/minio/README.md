@@ -44,6 +44,12 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 `mc` alias: `mc alias set infras http://s3.minio.local:8080 minio minio123`
 
 ## Backups (data safety)
+One-time: ensure the backup dir is writable by your user (the repo `volumes/`
+is often root-owned):
+```bash
+sudo mkdir -p ../../../volumes/minio-backup && sudo chown "$USER" ../../../volumes/minio-backup
+```
+Then:
 ```bash
 ./scripts/backup.sh create            # snapshot all buckets → volumes/minio-backup/
 ./scripts/backup.sh list

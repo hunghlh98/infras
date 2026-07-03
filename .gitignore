@@ -21,3 +21,6 @@ minikube-local/k8s-local/postgres/backups/
 *.backup
 *.sql.gz
 *.dump
+
+minikube-local/k8s-local/minio/scripts/bin/
+volumes/minio-backup/
