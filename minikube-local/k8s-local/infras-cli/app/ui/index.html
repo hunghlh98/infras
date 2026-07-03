@@ -319,6 +319,9 @@
                     <option value="postgres">postgres</option>
                     <option value="redis">redis</option>
                     <option value="kafka">kafka</option>
+                    <option value="mysql">mysql</option>
+                    <option value="keycloak">keycloak</option>
+                    <option value="minio">minio</option>
                   </select>
                 </div>
               </div>
@@ -350,6 +353,9 @@
                     <option value="postgres">postgres</option>
                     <option value="redis">redis</option>
                     <option value="kafka">kafka</option>
+                    <option value="mysql">mysql</option>
+                    <option value="keycloak">keycloak</option>
+                    <option value="minio">minio</option>
                   </select>
                 </div>
               </div>
@@ -656,6 +662,21 @@
       el.innerHTML = '<table class="tbl"><thead><tr><th>Infra</th><th>Status</th><th>#</th><th>Provisioned apps</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
+    // Populate the Setup/Verify infra dropdowns from the backend's supported
+    // types (driven by SUPPORTED_INFRA_TYPES) so new infra types (e.g. minio)
+    // appear automatically — no hardcoded option list to drift.
+    function fillTypeSelect(id, types) {
+      var sel = $(id); if (!sel || !types.length) return;
+      var cur = sel.value;
+      sel.innerHTML = types.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join("");
+      if (types.indexOf(cur) >= 0) sel.value = cur;
+    }
+    function populateTypeSelects(infras) {
+      var types = (infras || []).map(function (i) { return i.type; });
+      fillTypeSelect("s-type", types);
+      fillTypeSelect("v-type", types);
+    }
+
     function renderApps(list) {
       var el = $("apps-list");
       if (!list.length) { el.innerHTML = '<div class="empty">No apps provisioned yet</div>'; return; }
@@ -671,7 +692,11 @@
       if (ovLoading) return;
       ovLoading = true;
       try {
-        try { renderInfras((await api("/acl/infras")).infras || []); }
+        try {
+          var inf = (await api("/acl/infras")).infras || [];
+          renderInfras(inf);
+          populateTypeSelects(inf);
+        }
         catch (e) { $("infras-list").innerHTML = '<div class="empty">Failed: ' + esc(e.message) + '</div>'; }
         try {
           var ap = await api("/acl/apps");

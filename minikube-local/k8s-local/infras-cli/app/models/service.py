@@ -13,7 +13,7 @@ class ACLSetupRequest(BaseModel):
         owner_username: Owner username (required for keycloak, optional for others)
     """
     service_name: str = Field(..., description="Name of the service", min_length=1)
-    infra_type: str = Field(..., description="Infrastructure type: mysql, postgres, redis, kafka, keycloak")
+    infra_type: str = Field(..., description="Infrastructure type: mysql, postgres, redis, kafka, keycloak, minio")
     owner_username: Optional[str] = Field(None, description="Owner username (required for keycloak)")
 
     model_config = {

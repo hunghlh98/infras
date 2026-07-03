@@ -179,7 +179,7 @@ def custom_openapi():
 
         ### Features
 
-        * **ACL Management**: Create and verify ACLs for MySQL, PostgreSQL, Redis, Kafka, and Keycloak
+        * **ACL Management**: Create and verify ACLs for MySQL, PostgreSQL, Redis, Kafka, Keycloak, and MinIO
         * **User Management**: Create Vault users and assign policies
         * **Vault Integration**: All credentials stored securely in Vault KV v2
         * **Kubernetes Integration**: Direct execution in pods using kubectl exec pattern
