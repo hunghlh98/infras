@@ -44,7 +44,7 @@ Key findings from investigation:
      Ingress (nginx):  s3.minio.local  → minio:80
                        minio.local     → infras-console:9090
      In-cluster DNS:   minio.infras-minio.svc.cluster.local
-     Backups:          mc mirror  →  volumes/minio-backup/  (host)
+     Mirror:           mc mirror --watch  →  minio/volumes/  (host, real-time)
 ```
 
 ### Single-node adaptation (important)
@@ -67,7 +67,7 @@ All manifests live under `minikube-local/k8s-local/minio/`, consistent with exis
 | `minio/tenant.yaml` | `Tenant` CR: 1 pool × 4 drives, EC:2, `requestAutoCert: false` |
 | `minio/tenant-config-secret.yaml` | Secret with `config.env` (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`) |
 | `minio/ingress.yaml` | Two ingresses: `s3.minio.local` → API, `minio.local` → console |
-| `minio/scripts/backup.sh` | `mc mirror` backup/restore/list/verify/cleanup/schedule (modeled on postgres/scripts/backup.sh) |
+| `minio/scripts/sync.sh` | real-time host mirror daemon (`mc mirror --watch --overwrite --remove`) → `minio/volumes/`; start/stop/status/watch/sync/restore |
 | `minio/scripts/setup-dns.sh` | Append `minio.local` + `s3.minio.local` to `/etc/hosts` |
 | `minio/README.md` | Deploy steps, access, backup usage, scale-to-prod notes |
 
@@ -99,10 +99,11 @@ Ingress uses `ingressClassName: nginx`, `ssl-redirect: "false"`, and a large `pr
 ### Primary: native PVCs + logical backup
 - MinIO data on `standard` PVCs (native container fs — MinIO-supported, no 9p).
 - Erasure coding EC:2 across 4 drives → tolerates loss of up to 2 of the 4 drives *within the cluster* (rehearses production data protection; not real HA on one physical disk).
-- **`minio/scripts/backup.sh`** mirrors all buckets to `volumes/minio-backup/<timestamp>/` on the host via `mc mirror`, following the conventions of `postgres/scripts/backup.sh`:
-  - subcommands: `create`, `list`, `restore <snapshot>`, `verify <snapshot>`, `cleanup`, `schedule [hour]`
-  - retention via `RETENTION_DAYS` (default 7)
-  - runs `mc` from a throwaway pod or local `mc` binary against `s3.minio.local`
+- **`minio/scripts/sync.sh`** keeps a **real-time host mirror** (not dated snapshots — object storage would bloat) using `mc mirror --watch --overwrite --remove` from all buckets into `minio/volumes/` (inside the module, user-owned; created automatically). The mirror stays flat in size and always reflects live data.
+  - commands: `start` / `stop` / `status` (background daemon via `nohup`), `watch` (foreground, for a systemd unit), `sync` (one-shot), `restore` (push mirror back into MinIO).
+  - reaches MinIO via `s3.minio.local` (or `S3_ENDPOINT` override); `mc` is auto-downloaded to `scripts/bin/`.
+  - **Trade-off (deliberate):** `--remove` makes this a live replica, not a point-in-time archive — an accidental delete in MinIO is also removed from the mirror. Chosen for size over snapshot history, appropriate for local dev.
+  - Does not survive reboot (nohup); re-run `start` or wrap `watch` in a systemd user unit.
 - This is the supported "data on my laptop" path for MinIO, and satisfies "data always safe" across cluster deletion.
 
 ### Secondary hardening: fix the fragile provisioner path
@@ -132,7 +133,7 @@ Single MinIO pod with 4 drives.
 3. From an `mc` client: create a bucket, `cp` an object, `ls` it back.
 4. Console reachable at `http://minio.local:8080`, login with root creds.
 5. In-cluster reachability: a throwaway pod resolves and PUTs to `minio.infras-minio.svc.cluster.local`.
-6. `backup.sh create` produces a snapshot under `volumes/minio-backup/`; `backup.sh verify` passes; delete a bucket and `restore` brings it back.
+6. `sync.sh sync` mirrors buckets into `minio/volumes/`; `sync.sh start` runs the real-time daemon; adding/deleting an object propagates to the mirror; `sync.sh restore` pushes it back.
 7. Data-safety drill: `minikube stop && minikube start` (data survives on PVC); documented `restore` recovers from host backup after a simulated PVC loss.
 
 ---

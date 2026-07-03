@@ -19,7 +19,7 @@
 - **Namespaces:** both the Operator and the Tenant run in `infras-minio` (the Operator is retargeted from its upstream default `minio-operator` via a kustomize overlay, keeping all MinIO resources under one infras-* namespace). The Operator is pinned to **1 replica** (single-node: its default 2 replicas require hostname anti-affinity). The `infras-minio` quota must NOT enforce `limits.*` (the Operator pods declare requests but no limits, so a `limits.*` quota would reject them). Additionally, because the quota DOES cap `requests.*`, a **LimitRange** (`minio-defaults`) in `infras-minio` supplies default requests — the Operator injects `sidecar`/`validate-arguments` containers with no resources, which the quota would otherwise reject. The Tenant pool is named **`minio-pool`** (resources: StatefulSet `infras-minio-pool`, pod `infras-minio-pool-0`, PVCs `data{0-3}-infras-minio-pool-0`).
 - **Ingress:** `ingressClassName: nginx`; hosts `minio.local` (console) and `s3.minio.local` (S3 API); reached via the existing `minikube-ingress-forwarder` on `http://<host>.local:8080`.
 - **Dev credentials (change for anything real):** root `minio` / `minio123`; console user `console` / `console123`. These are local-dev placeholders.
-- **Backups:** local `mc` binary → `volumes/minio-backup/<timestamp>/` on the host.
+- **Data safety:** real-time host mirror (`mc mirror --watch --overwrite --remove`) → `minikube-local/k8s-local/minio/volumes/` (inside the module, user-owned). Single live mirror, size-flat — NOT dated snapshots. Local `mc` binary auto-downloaded to `scripts/bin/`.
 - **File layout:** all new manifests under `minikube-local/k8s-local/minio/`, matching existing service directories.
 - **infras-cli integration:** MinIO is a first-class infra type. Provisioning model is **bucket-per-app** (each app gets an own bucket named after the service, full RW on that bucket). Admin creds live in Vault at `infras/minio/root`. Client is the `minio` Python SDK (`MinioAdmin` + `Minio`). Endpoint default `minio.infras-minio.svc.cluster.local:80` (`minio_secure=false`); local CLI overrides via `MINIO_ENDPOINT`.
 - **infras-cli dependency:** `minio==7.2.15`. Adding it requires rebuilding the image into minikube's docker-env (`eval $(minikube -p minikube docker-env) && docker build ...`) and `kubectl rollout restart` — `minikube image load` will NOT overwrite `:latest`.
@@ -38,7 +38,7 @@
 | `minikube-local/k8s-local/minio/tenant.yaml` (create) | `Tenant` CR (1×4, EC:2, HTTP) |
 | `minikube-local/k8s-local/minio/ingress.yaml` (create) | Console + S3 API ingresses |
 | `minikube-local/k8s-local/minio/scripts/setup-dns.sh` (create) | Add `minio.local`/`s3.minio.local` to `/etc/hosts` |
-| `minikube-local/k8s-local/minio/scripts/backup.sh` (create) | `mc mirror` backup/restore/list/verify/cleanup/schedule |
+| `minikube-local/k8s-local/minio/scripts/sync.sh` (create) | real-time host mirror daemon: start/stop/status/watch/sync/restore |
 | `minikube-local/k8s-local/minio/README.md` (create) | Deploy, access, backup, scale-to-prod notes |
 | `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh` (create) | Seed `infras/minio/root` into Vault for infras-cli |
 | `.../infras-cli/app/config.py` (modify) | Add `minio_endpoint` / `minio_secure` |
@@ -519,172 +519,66 @@ git commit -m "feat(minio): nginx ingress + local DNS for console and S3 API"
 
 ---
 
-## Task 6: Backup & Restore Script
+## Task 6: Real-time Host Mirror (data safety)
 
 **Files:**
-- Create: `minikube-local/k8s-local/minio/scripts/backup.sh`
+- Create: `minikube-local/k8s-local/minio/scripts/sync.sh`
 
 **Interfaces:**
-- Consumes: S3 API at `http://s3.minio.local:8080` (Task 5); root creds from Secret `storage-configuration` (Task 3).
-- Produces: host snapshots under `volumes/minio-backup/<timestamp>/` and a restore path from them.
+- Consumes: S3 API at `http://s3.minio.local:8080` (Task 5, or `S3_ENDPOINT` override); root creds from Secret `storage-configuration` (Task 3).
+- Produces: a live host mirror at `minikube-local/k8s-local/minio/volumes/` and a `restore` path back into MinIO.
 
-- [ ] **Step 1: Write the backup script**
+**Design:** object storage makes dated snapshots wasteful (each run duplicates all objects). Instead this keeps ONE host mirror continuously in sync via `mc mirror --watch --overwrite --remove`, so the mirror is size-flat and always current. The mirror dir lives inside the module (`minio/volumes/`, user-owned) — not the root-owned repo `volumes/`. Trade-off: `--remove` makes it a live replica, not a point-in-time archive (an accidental delete propagates).
 
-Create `minikube-local/k8s-local/minio/scripts/backup.sh`. It auto-fetches a local `mc` binary, reads root creds from the k8s Secret, and mirrors all buckets to the host:
+- [ ] **Step 1: Write the sync script**
 
+Create `minikube-local/k8s-local/minio/scripts/sync.sh` with commands `start` / `stop` / `status` (background `nohup` daemon), `watch` (foreground, for a systemd unit), `sync` (one-shot), `restore`. Key elements: auto-download `mc` to `scripts/bin/`; read root creds from the `storage-configuration` Secret; `MIRROR_DIR` defaults to `$MINIO_DIR/volumes`; daemon runs `mc mirror --watch --overwrite --remove "$ALIAS" "$MIRROR_DIR"` writing to a pidfile + logfile; `ensure_dir` fails with a clear hint if the dir isn't writable. (Full script committed in the repo.)
+
+- [ ] **Step 2: Make executable and verify one-shot sync**
+
+The mirror dir must resolve to `s3.minio.local`; if `/etc/hosts` isn't set, port-forward and override `S3_ENDPOINT`:
 ```bash
-#!/bin/bash
-# MinIO backup/restore for minikube — mirrors all buckets to the host.
-# Commands: create | list | restore <snapshot> | verify <snapshot> | cleanup | schedule [hour]
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MINIO_DIR="$(dirname "$SCRIPT_DIR")"
-PROJECT_ROOT="$(cd "$MINIO_DIR/../../.." && pwd)"
-BACKUP_DIR="${BACKUP_DIR:-$PROJECT_ROOT/volumes/minio-backup}"
-RETENTION_DAYS="${RETENTION_DAYS:-7}"
-NAMESPACE="infras-minio"
-S3_ENDPOINT="${S3_ENDPOINT:-http://s3.minio.local:8080}"
-ALIAS="infras"
-MC_BIN="$SCRIPT_DIR/bin/mc"
-
-log()  { echo -e "\033[0;34mℹ\033[0m $1"; }
-ok()   { echo -e "\033[0;32m✓\033[0m $1"; }
-warn() { echo -e "\033[1;33m⚠\033[0m $1"; }
-err()  { echo -e "\033[0;31m✗\033[0m $1"; }
-
-ensure_mc() {
-  if [ ! -x "$MC_BIN" ]; then
-    log "Downloading mc client..."
-    mkdir -p "$(dirname "$MC_BIN")"
-    curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$MC_BIN"
-    chmod +x "$MC_BIN"
-  fi
-}
-
-configure_alias() {
-  local user pass env
-  env=$(kubectl get secret storage-configuration -n "$NAMESPACE" -o jsonpath='{.data.config\.env}' | base64 -d)
-  user=$(echo "$env" | sed -n 's/^export MINIO_ROOT_USER="\(.*\)"$/\1/p')
-  pass=$(echo "$env" | sed -n 's/^export MINIO_ROOT_PASSWORD="\(.*\)"$/\1/p')
-  "$MC_BIN" alias set "$ALIAS" "$S3_ENDPOINT" "$user" "$pass" >/dev/null
-}
-
-create_backup() {
-  ensure_mc; configure_alias
-  local ts snap
-  ts=$(date +"%Y%m%d-%H%M%S")
-  snap="$BACKUP_DIR/$ts"
-  mkdir -p "$snap"
-  log "Mirroring all buckets to $snap ..."
-  "$MC_BIN" mirror --overwrite "$ALIAS" "$snap"
-  ok "Snapshot created: $snap"
-}
-
-list_backups() {
-  if [ ! -d "$BACKUP_DIR" ]; then warn "No backups in $BACKUP_DIR"; return; fi
-  log "Snapshots in $BACKUP_DIR:"
-  ls -1 "$BACKUP_DIR"
-}
-
-restore_backup() {
-  local snap="$1"
-  [ -z "$snap" ] && { err "Usage: $0 restore <snapshot>"; list_backups; exit 1; }
-  [[ "$snap" != /* ]] && snap="$BACKUP_DIR/$snap"
-  [ -d "$snap" ] || { err "Snapshot not found: $snap"; exit 1; }
-  ensure_mc; configure_alias
-  warn "This mirrors $snap back INTO MinIO (may overwrite objects)."
-  read -p "Continue? (yes/no): " c; [ "$c" = "yes" ] || { log "Cancelled"; exit 0; }
-  "$MC_BIN" mirror --overwrite "$snap" "$ALIAS"
-  ok "Restored from $snap"
-}
-
-verify_backup() {
-  local snap="$1"
-  [ -z "$snap" ] && { err "Usage: $0 verify <snapshot>"; exit 1; }
-  [[ "$snap" != /* ]] && snap="$BACKUP_DIR/$snap"
-  [ -d "$snap" ] || { err "Snapshot not found: $snap"; exit 1; }
-  local files size
-  files=$(find "$snap" -type f | wc -l)
-  size=$(du -sh "$snap" | cut -f1)
-  log "Snapshot: $snap"; echo "  Files: $files"; echo "  Size:  $size"
-  [ "$files" -gt 0 ] && ok "Verification passed" || { err "Snapshot is empty"; exit 1; }
-}
-
-cleanup_backups() {
-  [ -d "$BACKUP_DIR" ] || { warn "Nothing to clean"; return; }
-  log "Removing snapshots older than $RETENTION_DAYS days..."
-  find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -mtime +"$RETENTION_DAYS" -print -exec rm -rf {} \;
-  ok "Cleanup done"
-}
-
-schedule_backup() {
-  local hour="${1:-02}"
-  local cmd="cd $MINIO_DIR && ./scripts/backup.sh create >> $BACKUP_DIR/backup.log 2>&1"
-  (crontab -l 2>/dev/null | grep -v "minio/scripts/backup.sh"; echo "0 $hour * * * $cmd") | crontab -
-  ok "Scheduled daily backup at ${hour}:00"
-}
-
-case "${1:-}" in
-  create)   create_backup ;;
-  list)     list_backups ;;
-  restore)  restore_backup "${2:-}" ;;
-  verify)   verify_backup "${2:-}" ;;
-  cleanup)  cleanup_backups ;;
-  schedule) schedule_backup "${2:-}" ;;
-  *) echo "Usage: $0 {create|list|restore <snap>|verify <snap>|cleanup|schedule [hour]}"; exit 1 ;;
-esac
-```
-
-- [ ] **Step 2: Make executable and seed test data**
-
-Run (creates a bucket + object so the backup has content):
-```bash
-chmod +x minikube-local/k8s-local/minio/scripts/backup.sh
+chmod +x minikube-local/k8s-local/minio/scripts/sync.sh
+kubectl port-forward svc/minio -n infras-minio 9000:80 >/tmp/pf.log 2>&1 &
 BIN=minikube-local/k8s-local/minio/scripts/bin/mc
-minikube-local/k8s-local/minio/scripts/backup.sh list >/dev/null 2>&1 || true   # triggers mc download
-$BIN mb --ignore-existing infras/testbucket
-echo "hello-minio" | $BIN pipe infras/testbucket/hello.txt
+# (mc auto-downloads on first run)
+S3_ENDPOINT=http://localhost:9000 minikube-local/k8s-local/minio/scripts/sync.sh sync
 ```
-Expected: `Bucket created successfully` and no error on `pipe`.
+Seed an object first (`$BIN mb infras/testbucket && echo hi | $BIN pipe infras/testbucket/hi.txt`) and confirm it appears under `minio/volumes/testbucket/hi.txt`.
 
-- [ ] **Step 3: Create and verify a snapshot**
+- [ ] **Step 3: Verify the real-time daemon**
 
-Run:
 ```bash
-minikube-local/k8s-local/minio/scripts/backup.sh create
-SNAP=$(ls -1t volumes/minio-backup | head -1)
-minikube-local/k8s-local/minio/scripts/backup.sh verify "$SNAP"
-cat "volumes/minio-backup/$SNAP/testbucket/hello.txt"
+S3_ENDPOINT=http://localhost:9000 minikube-local/k8s-local/minio/scripts/sync.sh start
+S3_ENDPOINT=http://localhost:9000 minikube-local/k8s-local/minio/scripts/sync.sh status
+# add an object -> appears in minio/volumes within a few seconds
+# delete an object -> removed from minio/volumes (--remove)
+minikube-local/k8s-local/minio/scripts/sync.sh stop
 ```
-Expected: snapshot created; verify reports Files ≥ 1, "Verification passed"; the file prints `hello-minio` — **proving the object now lives on your host disk**.
+Expected: daemon reports Running; adds/deletes propagate to the mirror; `stop` cleans the pidfile.
 
 - [ ] **Step 4: Restore drill**
 
-Run (delete the bucket, then restore from host):
 ```bash
-BIN=minikube-local/k8s-local/minio/scripts/bin/mc
-$BIN rb --force infras/testbucket
-$BIN mb infras/testbucket
-SNAP=$(ls -1t volumes/minio-backup | head -1)
-echo yes | minikube-local/k8s-local/minio/scripts/backup.sh restore "$SNAP"
-$BIN cat infras/testbucket/hello.txt
+# delete a bucket in MinIO, then push the mirror back
+echo yes | S3_ENDPOINT=http://localhost:9000 minikube-local/k8s-local/minio/scripts/sync.sh restore
+$BIN cat infras/testbucket/hi.txt   # -> recovered
 ```
-Expected: `hello-minio` — data recovered from the host snapshot.
 
-- [ ] **Step 5: Ignore the mc binary and backups in git**
+- [ ] **Step 5: Ignore mc binary, pidfile, and mirror data in git**
 
 Append to `.gitignore` (repo root):
 ```
 minikube-local/k8s-local/minio/scripts/bin/
-volumes/minio-backup/
+minikube-local/k8s-local/minio/scripts/.sync.pid
+minikube-local/k8s-local/minio/volumes/
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add minikube-local/k8s-local/minio/scripts/backup.sh .gitignore
-git commit -m "feat(minio): mc-mirror backup/restore script with host snapshots"
+git add minikube-local/k8s-local/minio/scripts/sync.sh .gitignore
+git commit -m "feat(minio): real-time host mirror (mc mirror --watch) for data safety"
 ```
 
 ---
@@ -748,11 +642,11 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 
 ## Backups (data safety)
 ```bash
-./scripts/backup.sh create            # snapshot all buckets → volumes/minio-backup/
-./scripts/backup.sh list
-./scripts/backup.sh verify <snapshot>
-./scripts/backup.sh restore <snapshot>
-./scripts/backup.sh schedule 2        # daily at 02:00
+./scripts/sync.sh start     # real-time mirror daemon → minio/volumes/
+./scripts/sync.sh status
+./scripts/sync.sh sync      # one-shot mirror
+./scripts/sync.sh restore   # push mirror back into MinIO
+./scripts/sync.sh stop
 ```
 
 ## Scaling to real production
@@ -766,7 +660,7 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 ## Known limitation
 Data lives on native PVCs at the minikube provisioner path
 (`/tmp/hostpath-provisioner`), which is not persisted across container
-recreation. Rely on `backup.sh` for durability, or apply the repo-wide
+recreation. Rely on the `sync.sh` host mirror for durability, or apply the repo-wide
 provisioner fix (separate task).
 ```
 
@@ -1235,7 +1129,7 @@ git commit -m "feat(minio): seed Vault admin creds + end-to-end infras-cli provi
 
 ## Self-Review Notes
 
-- **Spec coverage:** Operator install (T2), Tenant 1×4 EC:2 on standard PVCs (T4), HTTP + ingress `minio.local`/`s3.minio.local` (T5), k8s Secret creds with Vault noted phase-2 (T3/T7), `mc mirror` backups to `volumes/minio-backup/` (T6), single-node anti-affinity adaptation (T4/global constraints), resource-quota caveat (T1), provisioner-fragility documented as out-of-scope follow-up (T7/global constraints), **infras-cli integration: config+dep+MinIOService (T8), factory/API/CLI registration (T9), Vault seeding + image rebuild + end-to-end provision (T10)** covering spec §8. All spec §2–§10 items map to a task.
+- **Spec coverage:** Operator install (T2), Tenant 1×4 EC:2 on standard PVCs (T4), HTTP + ingress `minio.local`/`s3.minio.local` (T5), k8s Secret creds with Vault noted phase-2 (T3/T7), real-time host mirror via `sync.sh` to `minio/volumes/` (T6), single-node anti-affinity adaptation (T4/global constraints), resource-quota caveat (T1), provisioner-fragility documented as out-of-scope follow-up (T7/global constraints), **infras-cli integration: config+dep+MinIOService (T8), factory/API/CLI registration (T9), Vault seeding + image rebuild + end-to-end provision (T10)** covering spec §8. All spec §2–§10 items map to a task.
 - **Type consistency (infras-cli):** `MinIOService.create_acl/verify_acl/get_vault_path` signatures match the `InfrastructureService` base and how `acl.py` calls them; `_clients` and `_policy_json` are patched/asserted identically in `test_minio_service.py`; factory key `"minio"` matches `SUPPORTED_INFRA_TYPES` and the `infras-minio` namespace probed by `list_infras`.
 - **Endpoint assumption:** `MinIOService` defaults to in-cluster `minio.infras-minio.svc.cluster.local:80`. The end-to-end verify (T10 Step 4) runs *inside* the cluster (via `kubectl exec` into the infras-cli pod) so DNS resolves; local host runs would need `MINIO_ENDPOINT=s3.minio.local:8080`.
 - **Service-name assumption:** the ingress/backup steps assume Operator service names `minio` and `infras-console` and ports `80`/`9090`. T4 Step 4 and T5 Step 1 explicitly print the actual values so the implementer corrects them if the pinned Operator build differs.

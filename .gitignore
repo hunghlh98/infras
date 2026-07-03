@@ -22,5 +22,9 @@ minikube-local/k8s-local/postgres/backups/
 *.sql.gz
 *.dump
 
+# MinIO: mc client binary, sync daemon pidfile, and the live host mirror data.
+# The mirror dir is fully mc-managed (mirror --remove), so nothing here is
+# tracked; sync.sh recreates it via mkdir -p.
 minikube-local/k8s-local/minio/scripts/bin/
-volumes/minio-backup/
+minikube-local/k8s-local/minio/scripts/.sync.pid
+minikube-local/k8s-local/minio/volumes/

@@ -43,20 +43,28 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 
 `mc` alias: `mc alias set infras http://s3.minio.local:8080 minio minio123`
 
-## Backups (data safety)
-One-time: ensure the backup dir is writable by your user (the repo `volumes/`
-is often root-owned):
+## Data safety — real-time host mirror
+Instead of dated snapshots (which duplicate all objects and grow unbounded),
+a **continuous mirror** keeps a single host copy in sync with MinIO using
+`mc mirror --watch --overwrite --remove`. The mirror lives in this module at
+`minio/volumes/` (user-owned; created automatically) and stays flat in size.
+
 ```bash
-sudo mkdir -p ../../../volumes/minio-backup && sudo chown "$USER" ../../../volumes/minio-backup
+./scripts/sync.sh start     # start the real-time mirror daemon (background)
+./scripts/sync.sh status    # is it running?
+./scripts/sync.sh stop      # stop it
+./scripts/sync.sh sync      # one-shot mirror now, then exit
+./scripts/sync.sh watch     # run in foreground (for a systemd user unit)
+./scripts/sync.sh restore   # push the host mirror BACK into MinIO (recovery)
 ```
-Then:
-```bash
-./scripts/backup.sh create            # snapshot all buckets → volumes/minio-backup/
-./scripts/backup.sh list
-./scripts/backup.sh verify <snapshot>
-./scripts/backup.sh restore <snapshot>
-./scripts/backup.sh schedule 2        # daily at 02:00
-```
+
+- Needs `s3.minio.local` reachable — run `./scripts/setup-dns.sh` first, or set
+  `S3_ENDPOINT` (e.g. a `kubectl port-forward` URL).
+- The daemon uses `nohup`; it does **not** survive reboot. Re-run `start` after
+  boot, or wrap `watch` in a systemd user unit for persistence.
+- **Trade-off:** `--remove` makes the mirror a live replica, not a point-in-time
+  archive — an accidental delete in MinIO is also removed from the mirror. This
+  is the deliberate size-vs-snapshot choice for local dev.
 
 ## Scaling to real production
 - Increase the pool to `servers: 4+` across multiple nodes and remove the
