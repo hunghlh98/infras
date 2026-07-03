@@ -112,3 +112,18 @@ spec:
     limits.cpu: "500m"
     limits.memory: "1Gi"
     persistentvolumeclaims: "1"
+---
+# Resource Quota for infras-minio namespace
+# Generous on purpose: the MinIO Operator injects init/sidecar containers.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: minio-resource-quota
+  namespace: infras-minio
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: "1Gi"
+    limits.cpu: "2"
+    limits.memory: "3Gi"
+    persistentvolumeclaims: "6"

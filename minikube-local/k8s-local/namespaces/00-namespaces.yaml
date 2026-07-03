@@ -62,3 +62,11 @@ metadata:
   labels:
     name: infras-management
     project: k8s-local
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infras-minio
+  labels:
+    name: infras-minio
+    project: k8s-local
