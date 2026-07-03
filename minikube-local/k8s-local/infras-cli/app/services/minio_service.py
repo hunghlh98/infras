@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import tempfile
 import structlog
 from typing import Dict, Any
@@ -39,6 +40,21 @@ class MinIOService(InfrastructureService):
         )
         return admin, s3
 
+    # S3 bucket naming: 3-63 chars, lowercase letters/digits/hyphens, must
+    # start and end alphanumeric. The service name is used as both the bucket
+    # and the access key, so reject invalid names up front with a clear error
+    # (ValueError -> HTTP 400) instead of an opaque S3 failure at make_bucket.
+    _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+
+    @classmethod
+    def _validate_name(cls, service_name: str) -> None:
+        if not cls._NAME_RE.match(service_name):
+            raise ValueError(
+                f"Invalid MinIO service name '{service_name}': must be 3-63 chars, "
+                "lowercase letters/digits/hyphens, and start & end alphanumeric "
+                "(S3 bucket naming rules)."
+            )
+
     @staticmethod
     def _policy_json(bucket: str) -> str:
         """Full read/write scoped to exactly one bucket."""
@@ -58,6 +74,7 @@ class MinIOService(InfrastructureService):
 
     async def create_acl(self, service_name: str, password: str, **kwargs) -> Dict[str, Any]:
         logger.info("Creating MinIO ACL", service_name=service_name)
+        self._validate_name(service_name)
 
         admin_user = await self.vault.fetch_secret("infras/minio/root", "username")
         admin_pass = await self.vault.fetch_secret("infras/minio/root", "password")

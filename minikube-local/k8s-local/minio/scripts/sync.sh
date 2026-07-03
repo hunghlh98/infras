@@ -27,7 +27,10 @@ S3_ENDPOINT="${S3_ENDPOINT:-http://s3.minio.local:8080}"
 ALIAS="infras"
 MC_BIN="$SCRIPT_DIR/bin/mc"
 PID_FILE="$SCRIPT_DIR/.sync.pid"
-LOG_FILE="${LOG_FILE:-$MIRROR_DIR/.sync.log}"
+# Keep the log OUTSIDE the mirror dir: `mc mirror --remove` would otherwise
+# delete a root-level .sync.log (no matching bucket), and `restore` would try
+# to treat it as an invalid bucket name.
+LOG_FILE="${LOG_FILE:-$SCRIPT_DIR/.sync.log}"
 
 log()  { echo -e "\033[0;34mℹ\033[0m $1"; }
 ok()   { echo -e "\033[0;32m✓\033[0m $1"; }

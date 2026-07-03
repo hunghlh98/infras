@@ -47,8 +47,9 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 
 Retrieve the root password:
 ```bash
+RT=$(kubectl get secret vault-root-token -n infras-vault -o jsonpath='{.data.token}' | base64 -d)
 kubectl exec -n infras-vault statefulset/vault -- \
-  sh -c 'VAULT_TOKEN=$(cat /root-token) vault kv get -field=password infras/minio/root'
+  sh -c "VAULT_TOKEN='$RT' vault kv get -field=password infras/minio/root"
 # then: mc alias set infras http://s3.minio.local:8080 minio <password>
 ```
 
@@ -86,5 +87,5 @@ a **continuous mirror** keeps a single host copy in sync with MinIO using
 ## Known limitation
 Data lives on native PVCs at the minikube provisioner path
 (`/tmp/hostpath-provisioner`), which is not persisted across container
-recreation. Rely on `backup.sh` for durability, or apply the repo-wide
+recreation. Rely on the `sync.sh` host mirror for durability, or apply the repo-wide
 provisioner fix (separate task).

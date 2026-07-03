@@ -30,8 +30,12 @@ echo "╚═══════════════════════�
 
 # Preconditions: namespace + quota + limitrange come from the shared
 # namespaces/ manifests (applied once for all services).
-if ! kubectl get ns "$NS_MINIO" >/dev/null 2>&1; then
-  echo "❌ Namespace $NS_MINIO missing. Apply first:"
+if ! kubectl get ns "$NS_MINIO" >/dev/null 2>&1 \
+   || ! kubectl get limitrange minio-defaults -n "$NS_MINIO" >/dev/null 2>&1; then
+  echo "❌ $NS_MINIO namespace or its minio-defaults LimitRange is missing."
+  echo "   The LimitRange is required — the operator injects sidecar/init containers"
+  echo "   with no resource requests, which the namespace quota would otherwise reject."
+  echo "   Apply first:"
   echo "   kubectl apply -f ../namespaces/00-namespaces.yaml -f ../namespaces/resource-quotas.yaml"
   exit 1
 fi

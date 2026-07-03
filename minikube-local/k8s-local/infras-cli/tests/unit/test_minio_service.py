@@ -23,6 +23,14 @@ def _service():
     return svc, vault
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["App1", "ap", "app_1", "-app", "app-"])
+async def test_create_acl_rejects_invalid_names(bad):
+    svc, _ = _service()
+    with pytest.raises(ValueError):
+        await svc.create_acl(bad, "secretpw")
+
+
 def test_policy_json_scopes_to_single_bucket():
     policy = json.loads(MinIOService._policy_json("app1"))
     assert policy["Statement"][0]["Resource"] == [
