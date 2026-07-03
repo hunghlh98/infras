@@ -15,6 +15,9 @@ kubernetes==28.1.0
 # HTTP Client (for Keycloak API)
 requests==2.31.0
 
+# MinIO Admin/S3 Client
+minio==7.2.15
+
 # Validation
 pydantic==2.5.3
 pydantic-settings==2.1.0

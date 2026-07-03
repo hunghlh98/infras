@@ -9,6 +9,7 @@ from .postgres_service import PostgreSQLService
 from .redis_service import RedisService
 from .kafka_service import KafkaService
 from .keycloak_service import KeycloakService
+from .minio_service import MinIOService
 from .vault_service import VaultService
 from ..k8s.operations import KubernetesOperations
 
@@ -25,6 +26,7 @@ class ServiceFactory:
         "redis": RedisService,
         "kafka": KafkaService,
         "keycloak": KeycloakService,
+        "minio": MinIOService,
     }
 
     @classmethod

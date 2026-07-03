@@ -12,7 +12,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 # Canonical infra types (deduped; matches ServiceFactory minus aliases).
-SUPPORTED_INFRA_TYPES = ["postgres", "redis", "kafka", "mysql", "keycloak"]
+SUPPORTED_INFRA_TYPES = ["postgres", "redis", "kafka", "mysql", "keycloak", "minio"]
 # Admin/credential keys stored under infras/<type>/ that are NOT apps.
 RESERVED_INFRA_KEYS = {"auth", "root", "sasl"}
 

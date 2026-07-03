@@ -112,3 +112,40 @@ spec:
     limits.cpu: "500m"
     limits.memory: "1Gi"
     persistentvolumeclaims: "1"
+---
+# Resource Quota for infras-minio namespace.
+# The MinIO Operator AND Tenant both live here. The Operator Deployment
+# declares requests but NO limits, so this quota intentionally does NOT
+# enforce limits.cpu/limits.memory (doing so would reject the Operator pods
+# at admission). Caps requests + PVC count only, with headroom for
+# operator (1 x 256Mi) + tenant.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: minio-resource-quota
+  namespace: infras-minio
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: "2Gi"
+    persistentvolumeclaims: "8"
+---
+# LimitRange for infras-minio. Because the quota above constrains
+# requests.cpu/requests.memory, EVERY container must declare requests — but
+# the MinIO Operator injects `sidecar` and `validate-arguments` containers
+# with no resources. This supplies namespace defaults so those injected
+# containers are admitted.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: minio-defaults
+  namespace: infras-minio
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 512Mi

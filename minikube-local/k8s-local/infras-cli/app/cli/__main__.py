@@ -43,7 +43,7 @@ console = Console()
 @app.command()
 def setup_acl(
     service_name: str = typer.Argument(..., help="Name of the service", metavar="SERVICE_NAME"),
-    infra_type: str = typer.Argument(..., help="Infrastructure type (mysql, postgres, redis, kafka, keycloak)", metavar="INFRA_TYPE"),
+    infra_type: str = typer.Argument(..., help="Infrastructure type (mysql, postgres, redis, kafka, keycloak, minio)", metavar="INFRA_TYPE"),
     owner_username: Optional[str] = typer.Option(None, "--owner-username", "-o", help="Owner username (required for keycloak)")
 ):
     """

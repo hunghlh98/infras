@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "kafka-0.kafka-headless.infras-kafka.svc.cluster.local:29092"
     keycloak_host: str = "keycloak.infras-keycloak.svc.cluster.local"
     keycloak_port: int = 8080
+    minio_endpoint: str = "minio.infras-minio.svc.cluster.local:80"
+    minio_secure: bool = False
 
     class Config:
         env_file = ".env"

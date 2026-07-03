@@ -1,0 +1,22 @@
+# Install the MinIO Operator into the infras-minio namespace (instead of the
+# upstream default `minio-operator`), keeping all MinIO resources under one
+# infras-* namespace. Pinned to the final community release v7.1.1.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: infras-minio
+
+resources:
+  - github.com/minio/operator?ref=v7.1.1
+
+# Single-node minikube: the operator Deployment defaults to 2 replicas with
+# required pod anti-affinity across hostnames, so the 2nd replica can never
+# schedule on one node. Pin to 1 replica.
+patches:
+  - target:
+      kind: Deployment
+      name: minio-operator
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
