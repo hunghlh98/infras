@@ -18,7 +18,7 @@
 - **TLS:** `requestAutoCert: false` (HTTP served, proxied by nginx; matches vault/grafana `ssl-redirect: "false"`).
 - **Namespaces:** both the Operator and the Tenant run in `infras-minio` (the Operator is retargeted from its upstream default `minio-operator` via a kustomize overlay, keeping all MinIO resources under one infras-* namespace). The Operator is pinned to **1 replica** (single-node: its default 2 replicas require hostname anti-affinity). The `infras-minio` quota must NOT enforce `limits.*` (the Operator pods declare requests but no limits, so a `limits.*` quota would reject them). Additionally, because the quota DOES cap `requests.*`, a **LimitRange** (`minio-defaults`) in `infras-minio` supplies default requests — the Operator injects `sidecar`/`validate-arguments` containers with no resources, which the quota would otherwise reject. The Tenant pool is named **`minio-pool`** (resources: StatefulSet `infras-minio-pool`, pod `infras-minio-pool-0`, PVCs `data{0-3}-infras-minio-pool-0`).
 - **Ingress:** `ingressClassName: nginx`; hosts `minio.local` (console) and `s3.minio.local` (S3 API); reached via the existing `minikube-ingress-forwarder` on `http://<host>.local:8080`.
-- **Dev credentials (change for anything real):** root `minio` / `minio123`; console user `console` / `console123`. These are local-dev placeholders.
+- **Credentials (house style, cf. postgres/scripts/deploy.sh):** NOT hardcoded on disk. `deploy.sh` generates a random **20-char alphanumeric** root password (`/dev/urandom | tr -dc 'A-Za-z0-9' | head -c 20`), stores it in **Vault** at `infras/minio/root` (the source of truth, reused on re-runs), and creates the k8s `storage-configuration`/`storage-user` Secrets from it. Root user is `minio`; console user is `console` (secret in `secret/storage-user`).
 - **Data safety:** real-time host mirror (`mc mirror --watch --overwrite --remove`) → `minikube-local/k8s-local/minio/volumes/` (inside the module, user-owned). Single live mirror, size-flat — NOT dated snapshots. Local `mc` binary auto-downloaded to `scripts/bin/`.
 - **File layout:** all new manifests under `minikube-local/k8s-local/minio/`, matching existing service directories.
 - **infras-cli integration:** MinIO is a first-class infra type. Provisioning model is **bucket-per-app** (each app gets an own bucket named after the service, full RW on that bucket). Admin creds live in Vault at `infras/minio/root`. Client is the `minio` Python SDK (`MinioAdmin` + `Minio`). Endpoint default `minio.infras-minio.svc.cluster.local:80` (`minio_secure=false`); local CLI overrides via `MINIO_ENDPOINT`.
@@ -33,14 +33,13 @@
 |------|----------------|
 | `minikube-local/k8s-local/namespaces/00-namespaces.yaml` (modify) | Add `infras-minio` namespace |
 | `minikube-local/k8s-local/namespaces/resource-quotas.yaml` (modify) | Add generous quota for `infras-minio` |
-| `minikube-local/k8s-local/minio/operator/install.sh` (create) | Pinned Operator install |
-| `minikube-local/k8s-local/minio/secrets.yaml` (create) | `storage-configuration` + `storage-user` Secrets |
+| `minikube-local/k8s-local/minio/scripts/deploy.sh` (create) | **Single deploy entrypoint**: operator + Vault-sourced creds + secrets + tenant + ingress |
+| `minikube-local/k8s-local/minio/operator/kustomization.yaml` (create) | Operator overlay (retarget ns → infras-minio, 1 replica) |
 | `minikube-local/k8s-local/minio/tenant.yaml` (create) | `Tenant` CR (1×4, EC:2, HTTP) |
 | `minikube-local/k8s-local/minio/ingress.yaml` (create) | Console + S3 API ingresses |
 | `minikube-local/k8s-local/minio/scripts/setup-dns.sh` (create) | Add `minio.local`/`s3.minio.local` to `/etc/hosts` |
 | `minikube-local/k8s-local/minio/scripts/sync.sh` (create) | real-time host mirror daemon: start/stop/status/watch/sync/restore |
 | `minikube-local/k8s-local/minio/README.md` (create) | Deploy, access, backup, scale-to-prod notes |
-| `minikube-local/k8s-local/minio/scripts/store-admin-creds.sh` (create) | Seed `infras/minio/root` into Vault for infras-cli |
 | `.../infras-cli/app/config.py` (modify) | Add `minio_endpoint` / `minio_secure` |
 | `.../infras-cli/requirements.txt` (modify) | Add `minio==7.2.15` |
 | `.../infras-cli/app/services/minio_service.py` (create) | `MinIOService` ACL provisioning |
@@ -127,11 +126,18 @@ git commit -m "feat(minio): add infras-minio namespace and resource quota"
 
 ---
 
+> **Consolidation note:** as-built, Tasks 2–5 (operator install, credential/secret
+> provisioning, tenant, ingress) are performed by a **single** `minio/scripts/deploy.sh`
+> (house style, cf. `postgres/scripts/deploy.sh`). The per-task steps below document
+> what that one script does end-to-end; there are no separate `install.sh` /
+> `secrets.yaml` / `store-admin-creds.sh` artifacts. Credentials are generated and
+> stored in Vault (`infras/minio/root`), never hardcoded.
+
 ## Task 2: Install the MinIO Operator (into infras-minio)
 
 **Files:**
 - Create: `minikube-local/k8s-local/minio/operator/kustomization.yaml`
-- Create: `minikube-local/k8s-local/minio/operator/install.sh`
+- Deploy: folded into `minikube-local/k8s-local/minio/scripts/deploy.sh` (`kubectl apply -k operator/`)
 
 **Interfaces:**
 - Produces: the `minio.min.io/v2` CRDs (`tenants.minio.min.io`, `policybindings.sts.min.io`) and a running Operator controller **in `infras-minio`**. Task 4 depends on the CRD existing.

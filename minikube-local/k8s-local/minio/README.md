@@ -15,17 +15,21 @@ Kubernetes deployment; data safety is provided by host backups.
 - 1 server × 4 drives, `EC:2` erasure coding, `standard` PVCs (2Gi each)
 - HTTP (`requestAutoCert: false`), proxied by nginx ingress
 
-## Deploy (in order)
+## Deploy
+One script does it all (operator + Vault-sourced credentials + tenant + ingress),
+matching the house style of `postgres/scripts/deploy.sh`:
 ```bash
-kubectl apply -f ../namespaces/00-namespaces.yaml
-kubectl apply -f ../namespaces/resource-quotas.yaml
-./operator/install.sh
-kubectl apply -f secrets.yaml
-kubectl apply -f tenant.yaml
-kubectl apply -f ingress.yaml
-./scripts/setup-dns.sh
-./scripts/store-admin-creds.sh   # seed infras/minio/root in Vault for infras-cli
+# one-time: shared namespaces + quota + limitrange (all services)
+kubectl apply -f ../namespaces/00-namespaces.yaml -f ../namespaces/resource-quotas.yaml
+# deploy MinIO
+./scripts/deploy.sh
+# optional, separate utilities:
+./scripts/setup-dns.sh      # /etc/hosts entries (sudo, one-time)
+./scripts/sync.sh start     # real-time host mirror (data safety)
 ```
+`deploy.sh` is idempotent — the root password is generated once, stored in Vault
+at `infras/minio/root`, and reused on re-runs (never rotated out from under a
+running tenant). Nothing is hardcoded on disk.
 
 ## Provisioning app access (infras-cli)
 MinIO is a first-class infra type. Each app gets its own bucket + scoped user:
@@ -37,11 +41,16 @@ infras-cli verify-acl <app> minio    # confirms the user exists
 ## Access
 | Interface | URL | Credentials |
 |-----------|-----|-------------|
-| Console | http://minio.local:8080 | `minio` / `minio123` |
-| S3 API (host) | http://s3.minio.local:8080 | root or `console` / `console123` |
+| Console | http://minio.local:8080 | user `minio`, password in Vault `infras/minio/root` |
+| S3 API (host) | http://s3.minio.local:8080 | same root, or console user (`secret/storage-user`) |
 | S3 API (in-cluster) | `minio.infras-minio.svc.cluster.local` | same |
 
-`mc` alias: `mc alias set infras http://s3.minio.local:8080 minio minio123`
+Retrieve the root password:
+```bash
+kubectl exec -n infras-vault statefulset/vault -- \
+  sh -c 'VAULT_TOKEN=$(cat /root-token) vault kv get -field=password infras/minio/root'
+# then: mc alias set infras http://s3.minio.local:8080 minio <password>
+```
 
 ## Data safety — real-time host mirror
 Instead of dated snapshots (which duplicate all objects and grow unbounded),
