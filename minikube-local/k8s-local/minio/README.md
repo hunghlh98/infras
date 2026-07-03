@@ -9,7 +9,9 @@ Kubernetes deployment; data safety is provided by host backups.
 > not receiving updates.
 
 ## Topology
-- Namespace: `infras-minio` (Operator in `minio-operator`)
+- Namespace: `infras-minio` (both the Operator and the Tenant live here)
+- Operator pinned to **1 replica** (single-node: its default 2 replicas require
+  anti-affinity across 2 nodes). See `operator/kustomization.yaml`.
 - 1 server × 4 drives, `EC:2` erasure coding, `standard` PVCs (2Gi each)
 - HTTP (`requestAutoCert: false`), proxied by nginx ingress
 

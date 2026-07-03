@@ -16,7 +16,7 @@
 - **Topology:** exactly **1 server × 4 `volumesPerServer`**, `MINIO_STORAGE_CLASS_STANDARD="EC:2"`. (Single-node minikube: multiple servers would fail scheduling under the Operator's node anti-affinity; 1 server × 4 drives gives erasure coding on one node.)
 - **Storage:** `storageClassName: standard`, `2Gi` per drive (4 drives = 8Gi).
 - **TLS:** `requestAutoCert: false` (HTTP served, proxied by nginx; matches vault/grafana `ssl-redirect: "false"`).
-- **Namespaces:** Operator → `minio-operator` (Operator-created); Tenant → `infras-minio` (we create).
+- **Namespaces:** both the Operator and the Tenant run in `infras-minio` (the Operator is retargeted from its upstream default `minio-operator` via a kustomize overlay, keeping all MinIO resources under one infras-* namespace). The Operator is pinned to **1 replica** (single-node: its default 2 replicas require hostname anti-affinity). The `infras-minio` quota must NOT enforce `limits.*` (the Operator pods declare requests but no limits, so a `limits.*` quota would reject them).
 - **Ingress:** `ingressClassName: nginx`; hosts `minio.local` (console) and `s3.minio.local` (S3 API); reached via the existing `minikube-ingress-forwarder` on `http://<host>.local:8080`.
 - **Dev credentials (change for anything real):** root `minio` / `minio123`; console user `console` / `console123`. These are local-dev placeholders.
 - **Backups:** local `mc` binary → `volumes/minio-backup/<timestamp>/` on the host.
@@ -82,8 +82,12 @@ Append to `minikube-local/k8s-local/namespaces/resource-quotas.yaml`. The quota 
 
 ```yaml
 ---
-# Resource Quota for infras-minio namespace
-# Generous on purpose: the MinIO Operator injects init/sidecar containers.
+# Resource Quota for infras-minio namespace.
+# The MinIO Operator AND Tenant both live here. The Operator Deployment
+# declares requests but NO limits, so this quota intentionally does NOT
+# enforce limits.cpu/limits.memory (that would reject the Operator pods at
+# admission). Caps requests + PVC count only, with headroom for
+# operator (1 x 256Mi) + tenant.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -91,11 +95,9 @@ metadata:
   namespace: infras-minio
 spec:
   hard:
-    requests.cpu: "1"
-    requests.memory: "1Gi"
-    limits.cpu: "2"
-    limits.memory: "3Gi"
-    persistentvolumeclaims: "6"
+    requests.cpu: "2"
+    requests.memory: "2Gi"
+    persistentvolumeclaims: "8"
 ```
 
 - [ ] **Step 3: Apply**
@@ -125,53 +127,82 @@ git commit -m "feat(minio): add infras-minio namespace and resource quota"
 
 ---
 
-## Task 2: Install the MinIO Operator
+## Task 2: Install the MinIO Operator (into infras-minio)
 
 **Files:**
+- Create: `minikube-local/k8s-local/minio/operator/kustomization.yaml`
 - Create: `minikube-local/k8s-local/minio/operator/install.sh`
 
 **Interfaces:**
-- Produces: the `minio-operator` namespace, the `minio.min.io/v2` CRDs (`tenants.minio.min.io`), and a running Operator controller. Task 4 depends on the CRD existing.
+- Produces: the `minio.min.io/v2` CRDs (`tenants.minio.min.io`, `policybindings.sts.min.io`) and a running Operator controller **in `infras-minio`**. Task 4 depends on the CRD existing.
 
-- [ ] **Step 1: Write the pinned install script**
+- [ ] **Step 1: Write the namespace-override overlay**
+
+Create `minikube-local/k8s-local/minio/operator/kustomization.yaml`. It uses the upstream operator as a remote base, retargets it to `infras-minio`, and pins to 1 replica for single-node:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: infras-minio
+
+resources:
+  - github.com/minio/operator?ref=v7.1.1
+
+# Single-node minikube: the operator Deployment defaults to 2 replicas with
+# required pod anti-affinity across hostnames, so the 2nd replica can never
+# schedule on one node. Pin to 1 replica.
+patches:
+  - target:
+      kind: Deployment
+      name: minio-operator
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+```
+
+- [ ] **Step 2: Write the install script**
 
 Create `minikube-local/k8s-local/minio/operator/install.sh`:
 
 ```bash
 #!/bin/bash
-# Install the MinIO Operator (pinned) into the minio-operator namespace.
+# Install the MinIO Operator (pinned v7.1.1) into the infras-minio namespace.
+# The namespace override lives in the kustomization.yaml next to this script,
+# which uses the upstream operator as a remote base.
 # NOTE: minio/operator was archived 2026-03-20; v7.1.1 is the final community
 # release. Requires Kubernetes >= 1.30.
 set -euo pipefail
 
-OPERATOR_VERSION="v7.1.1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "→ Installing MinIO Operator ${OPERATOR_VERSION}..."
-kubectl kustomize "github.com/minio/operator?ref=${OPERATOR_VERSION}" | kubectl apply -f -
+echo "→ Installing MinIO Operator v7.1.1 into namespace infras-minio..."
+kubectl apply -k "$SCRIPT_DIR"
 
 echo "→ Waiting for Operator deployment to become available..."
-kubectl -n minio-operator rollout status deployment/minio-operator --timeout=180s
+kubectl -n infras-minio rollout status deployment/minio-operator --timeout=180s
 
-echo "✅ MinIO Operator ${OPERATOR_VERSION} installed."
+echo "✅ MinIO Operator v7.1.1 installed in infras-minio."
 ```
 
-- [ ] **Step 2: Make it executable and run it**
+- [ ] **Step 3: Make it executable and run it**
 
 Run:
 ```bash
 chmod +x minikube-local/k8s-local/minio/operator/install.sh
 ./minikube-local/k8s-local/minio/operator/install.sh
 ```
-Expected: many `created` lines, then `deployment "minio-operator" successfully rolled out` and `✅ MinIO Operator v7.1.1 installed.`
+Expected: `created`/`configured`/`unchanged` lines, then `deployment "minio-operator" successfully rolled out`.
 
-- [ ] **Step 3: Verify the CRD and controller**
+- [ ] **Step 4: Verify the CRD and controller**
 
 Run:
 ```bash
 kubectl get crd tenants.minio.min.io
-kubectl get pods -n minio-operator
+kubectl get pods -n infras-minio -l app.kubernetes.io/name=operator
 ```
-Expected: CRD `tenants.minio.min.io` exists; Operator pod(s) in `minio-operator` are `Running`.
+Expected: CRD `tenants.minio.min.io` exists; a single Operator pod in `infras-minio` is `1/1 Running`.
 
 - [ ] **Step 4: Commit**
 

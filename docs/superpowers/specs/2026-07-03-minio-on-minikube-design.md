@@ -29,10 +29,10 @@ Key findings from investigation:
 ## 2. Architecture
 
 ```
-minio-operator (ns)            infras-minio (ns)
-┌────────────────┐             ┌───────────────────────────────────────┐
-│ MinIO Operator │──manages──► │ Tenant: infras                          │
-│  (controller)  │             │  Pool 0: 1 server × 4 drives (EC:2)     │
+                    infras-minio (ns)
+┌────────────────┐  ┌───────────────────────────────────────┐
+│ MinIO Operator │  │ Tenant: infras                          │
+│ (1 replica)    │─►│  Pool 0: 1 server × 4 drives (EC:2)     │
 └────────────────┘             │   ├─ pod infras-pool-0-0                │
                                │   │   ├─ PVC data0 (2Gi, standard)      │
                                │   │   ├─ PVC data1 (2Gi, standard)      │
@@ -121,7 +121,7 @@ Single MinIO pod with 4 drives.
 | Pod limits | cpu `1`, memory `2Gi` |
 | PVCs | 4 × 2Gi = 8Gi total |
 
-**Resource quota caveat:** tight ResourceQuotas can block Operator-managed pods (the Operator injects sidecars/init containers). The `infras-minio` quota must be **generous** (e.g. `requests.cpu: "1"`, `requests.memory: "1Gi"`, `limits.cpu: "2"`, `limits.memory: "3Gi"`, `persistentvolumeclaims: "6"`) or omitted initially. The Operator's own namespace (`minio-operator`) gets no quota.
+**Resource quota caveat:** the Operator and Tenant share `infras-minio`, so the quota binds both. The Operator Deployment declares requests but **no limits**, so the quota must **not** enforce `limits.cpu`/`limits.memory` — doing so rejects the Operator pods at admission. It caps requests + PVC count only: `requests.cpu: "2"`, `requests.memory: "2Gi"`, `persistentvolumeclaims: "8"`. The Operator is also pinned to **1 replica** via the install overlay (its default 2 replicas require hostname anti-affinity across 2 nodes — impossible on single-node minikube).
 
 ---
 

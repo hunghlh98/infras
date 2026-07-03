@@ -113,8 +113,12 @@ spec:
     limits.memory: "1Gi"
     persistentvolumeclaims: "1"
 ---
-# Resource Quota for infras-minio namespace
-# Generous on purpose: the MinIO Operator injects init/sidecar containers.
+# Resource Quota for infras-minio namespace.
+# The MinIO Operator AND Tenant both live here. The Operator Deployment
+# declares requests but NO limits, so this quota intentionally does NOT
+# enforce limits.cpu/limits.memory (doing so would reject the Operator pods
+# at admission). Caps requests + PVC count only, with headroom for
+# operator (2 x 256Mi) + tenant.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -122,8 +126,6 @@ metadata:
   namespace: infras-minio
 spec:
   hard:
-    requests.cpu: "1"
-    requests.memory: "1Gi"
-    limits.cpu: "2"
-    limits.memory: "3Gi"
-    persistentvolumeclaims: "6"
+    requests.cpu: "2"
+    requests.memory: "2Gi"
+    persistentvolumeclaims: "8"
