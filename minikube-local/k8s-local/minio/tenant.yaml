@@ -1,0 +1,57 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: infras
+  namespace: infras-minio
+  labels:
+    app: minio
+  annotations:
+    prometheus.io/path: /minio/v2/metrics/cluster
+    prometheus.io/port: "9000"
+    prometheus.io/scrape: "true"
+spec:
+  image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+  mountPath: /export
+  configuration:
+    name: storage-configuration
+  users:
+    - name: storage-user
+  requestAutoCert: false
+  podManagementPolicy: Parallel
+  pools:
+    - name: minio-pool
+      servers: 1
+      volumesPerServer: 4
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: standard
+          resources:
+            requests:
+              storage: 2Gi
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: "OnRootMismatch"
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi

@@ -4,7 +4,7 @@
 
 **Goal:** Deploy MinIO into the local minikube cluster via the MinIO Operator as a single-node erasure-coded Tenant, exposed through nginx ingress, with host backups for data safety, and provisionable through `infras-cli` (CLI + API) as a first-class infra type.
 
-**Architecture:** Install the MinIO Operator (controller) into `minio-operator`. Declare a `Tenant` in `infras-minio` running one pool of 1 server × 4 drives with `EC:2` erasure coding on native `standard` PVCs. Serve HTTP (no auto-TLS) behind the existing nginx ingress on the `:8080` forwarder. Achieve "data safe on host" via a local `mc mirror` backup script — not a live host mount (MinIO does not support 9p/NFS backends).
+**Architecture:** Install the MinIO Operator (controller) into `infras-minio` (retargeted from its upstream default via a kustomize overlay). Declare a `Tenant` in `infras-minio` running one pool (`minio-pool`) of 1 server × 4 drives with `EC:2` erasure coding on native `standard` PVCs. Serve HTTP (no auto-TLS) behind the existing nginx ingress on the `:8080` forwarder. Achieve "data safe on host" via a local `mc mirror` backup script — not a live host mount (MinIO does not support 9p/NFS backends).
 
 **Tech Stack:** Kubernetes 1.35 (minikube, docker driver), MinIO Operator v7.1.1, MinIO `RELEASE.2025-04-08T15-41-24Z`, nginx ingress, `mc` client, bash.
 
@@ -16,7 +16,7 @@
 - **Topology:** exactly **1 server × 4 `volumesPerServer`**, `MINIO_STORAGE_CLASS_STANDARD="EC:2"`. (Single-node minikube: multiple servers would fail scheduling under the Operator's node anti-affinity; 1 server × 4 drives gives erasure coding on one node.)
 - **Storage:** `storageClassName: standard`, `2Gi` per drive (4 drives = 8Gi).
 - **TLS:** `requestAutoCert: false` (HTTP served, proxied by nginx; matches vault/grafana `ssl-redirect: "false"`).
-- **Namespaces:** both the Operator and the Tenant run in `infras-minio` (the Operator is retargeted from its upstream default `minio-operator` via a kustomize overlay, keeping all MinIO resources under one infras-* namespace). The Operator is pinned to **1 replica** (single-node: its default 2 replicas require hostname anti-affinity). The `infras-minio` quota must NOT enforce `limits.*` (the Operator pods declare requests but no limits, so a `limits.*` quota would reject them).
+- **Namespaces:** both the Operator and the Tenant run in `infras-minio` (the Operator is retargeted from its upstream default `minio-operator` via a kustomize overlay, keeping all MinIO resources under one infras-* namespace). The Operator is pinned to **1 replica** (single-node: its default 2 replicas require hostname anti-affinity). The `infras-minio` quota must NOT enforce `limits.*` (the Operator pods declare requests but no limits, so a `limits.*` quota would reject them). Additionally, because the quota DOES cap `requests.*`, a **LimitRange** (`minio-defaults`) in `infras-minio` supplies default requests — the Operator injects `sidecar`/`validate-arguments` containers with no resources, which the quota would otherwise reject. The Tenant pool is named **`minio-pool`** (resources: StatefulSet `infras-minio-pool`, pod `infras-minio-pool-0`, PVCs `data{0-3}-infras-minio-pool-0`).
 - **Ingress:** `ingressClassName: nginx`; hosts `minio.local` (console) and `s3.minio.local` (S3 API); reached via the existing `minikube-ingress-forwarder` on `http://<host>.local:8080`.
 - **Dev credentials (change for anything real):** root `minio` / `minio123`; console user `console` / `console123`. These are local-dev placeholders.
 - **Backups:** local `mc` binary → `volumes/minio-backup/<timestamp>/` on the host.
@@ -288,7 +288,7 @@ git commit -m "feat(minio): storage-configuration and console-user secrets"
 
 **Interfaces:**
 - Consumes: CRD `tenants.minio.min.io` (Task 2); Secrets `storage-configuration`, `storage-user` (Task 3); namespace/quota (Task 1).
-- Produces: Tenant `infras`; the Operator-created Services `minio` (S3 API) and `infras-console` (console) in `infras-minio`; PVCs `data0-3-infras-pool-0-0`. Task 5 (ingress) and Task 6 (backup) depend on these service names.
+- Produces: Tenant `infras`; the Operator-created Services `minio` (S3 API) and `infras-console` (console) in `infras-minio`; PVCs `data0-3-infras-minio-pool-0`. Task 5 (ingress) and Task 6 (backup) depend on these service names.
 
 - [ ] **Step 1: Write the Tenant manifest**
 
@@ -316,7 +316,7 @@ spec:
   requestAutoCert: false
   podManagementPolicy: Parallel
   pools:
-    - name: pool-0
+    - name: minio-pool
       servers: 1
       volumesPerServer: 4
       volumeClaimTemplate:
@@ -369,13 +369,13 @@ Run:
 kubectl -n infras-minio wait --for=condition=ready pod -l v1.min.io/tenant=infras --timeout=240s
 kubectl get pvc -n infras-minio
 ```
-Expected: pod `infras-pool-0-0` becomes ready; four Bound PVCs `data0-infras-pool-0-0` … `data3-infras-pool-0-0`, each 2Gi, storageclass `standard`.
+Expected: pod `infras-minio-pool-0` becomes ready; four Bound PVCs `data0-infras-minio-pool-0` … `data3-infras-minio-pool-0`, each 2Gi, storageclass `standard`.
 
 - [ ] **Step 4: Verify erasure coding and services**
 
 Run:
 ```bash
-kubectl logs -n infras-minio infras-pool-0-0 -c minio | grep -iE "Status:|drives|EC" | head
+kubectl logs -n infras-minio infras-minio-pool-0 -c minio | grep -iE "Status:|drives|EC" | head
 kubectl get svc -n infras-minio
 ```
 Expected: startup log reports 4 online drives; Services include `minio` (S3 API) and `infras-console`. **Note the actual service names/ports — Task 5 must match them.**

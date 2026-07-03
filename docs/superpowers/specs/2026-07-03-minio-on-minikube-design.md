@@ -32,8 +32,8 @@ Key findings from investigation:
                     infras-minio (ns)
 ┌────────────────┐  ┌───────────────────────────────────────┐
 │ MinIO Operator │  │ Tenant: infras                          │
-│ (1 replica)    │─►│  Pool 0: 1 server × 4 drives (EC:2)     │
-└────────────────┘             │   ├─ pod infras-pool-0-0                │
+│ (1 replica)    │─►│  Pool minio-pool: 1 server × 4 drives (EC:2)     │
+└────────────────┘             │   ├─ pod infras-minio-pool-0                │
                                │   │   ├─ PVC data0 (2Gi, standard)      │
                                │   │   ├─ PVC data1 (2Gi, standard)      │
                                │   │   ├─ PVC data2 (2Gi, standard)      │
@@ -128,7 +128,7 @@ Single MinIO pod with 4 drives.
 ## 7. Testing / Verification
 
 1. `kubectl get tenant -n infras-minio` → Tenant reaches `Initialized`.
-2. Pod `infras-pool-0-0` Running with 4 mounted PVCs.
+2. Pod `infras-minio-pool-0` Running with 4 mounted PVCs.
 3. From an `mc` client: create a bucket, `cp` an object, `ls` it back.
 4. Console reachable at `http://minio.local:8080`, login with root creds.
 5. In-cluster reachability: a throwaway pod resolves and PUTs to `minio.infras-minio.svc.cluster.local`.

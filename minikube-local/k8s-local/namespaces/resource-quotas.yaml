@@ -129,3 +129,23 @@ spec:
     requests.cpu: "2"
     requests.memory: "2Gi"
     persistentvolumeclaims: "8"
+---
+# LimitRange for infras-minio. Because the quota above constrains
+# requests.cpu/requests.memory, EVERY container must declare requests — but
+# the MinIO Operator injects `sidecar` and `validate-arguments` containers
+# with no resources. This supplies namespace defaults so those injected
+# containers are admitted.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: minio-defaults
+  namespace: infras-minio
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
